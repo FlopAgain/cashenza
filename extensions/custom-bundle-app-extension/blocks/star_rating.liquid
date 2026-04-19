@@ -1,0 +1,506 @@
+{% assign current_variant = product.selected_or_first_available_variant %}
+{% assign color_value = '' %}
+
+{% for option in product.options_with_values %}
+  {% assign option_name_downcase = option.name | downcase %}
+  {% if option_name_downcase contains 'couleur' or option_name_downcase contains 'color' %}
+    {% assign color_value = current_variant.options[forloop.index0] %}
+  {% endif %}
+{% endfor %}
+
+{% assign unit_price = current_variant.price %}
+
+<div
+  class="bundle-block"
+  {{ block.shopify_attributes }}
+  data-initial-variant-id="{{ current_variant.id }}"
+>
+  <div class="bundle-product">
+    <div class="bundle-product__media">
+      {% if current_variant.featured_image %}
+        <img
+          id="bundle-product-image-{{ block.id }}"
+          src="{{ current_variant.featured_image | image_url: width: 400 }}"
+          alt="{{ product.title | escape }}"
+          width="160"
+          height="160"
+          loading="lazy"
+        >
+      {% elsif product.featured_image %}
+        <img
+          id="bundle-product-image-{{ block.id }}"
+          src="{{ product.featured_image | image_url: width: 400 }}"
+          alt="{{ product.title | escape }}"
+          width="160"
+          height="160"
+          loading="lazy"
+        >
+      {% endif %}
+    </div>
+
+    <div class="bundle-product__infos">
+      <h3>{{ product.title }}</h3>
+
+      <p id="bundle-product-price-{{ block.id }}">
+        <strong>{{ unit_price | money }}</strong>
+      </p>
+
+      {% if color_value != blank %}
+        <p id="bundle-product-color-{{ block.id }}">Couleur : {{ color_value }}</p>
+      {% else %}
+        <p id="bundle-product-color-{{ block.id }}" style="display:none;"></p>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if block.settings.show_variant_picker %}
+    <div class="bundle-variant-picker">
+      <p class="bundle-variant-picker__label">Choisir une variante</p>
+
+      {% if block.settings.show_variant_thumbnails %}
+        <div class="bundle-variant-thumbs" id="bundle-variant-thumbs-{{ block.id }}">
+          {% for variant in product.variants %}
+            {% assign variant_image = variant.featured_image | default: product.featured_image %}
+            <button
+              type="button"
+              class="bundle-variant-thumb {% if variant.id == current_variant.id %}is-active{% endif %}"
+              data-variant-id="{{ variant.id }}"
+              data-variant-price="{{ variant.price }}"
+              data-variant-title="{{ variant.title | escape }}"
+              data-variant-image="{% if variant_image %}{{ variant_image | image_url: width: 300 }}{% endif %}"
+              data-variant-options='{{ variant.options | json | escape }}'
+              data-available="{{ variant.available }}"
+            >
+              {% if variant_image %}
+                <img
+                  src="{{ variant_image | image_url: width: 120 }}"
+                  alt="{{ variant.title | escape }}"
+                  width="64"
+                  height="64"
+                  loading="lazy"
+                >
+              {% endif %}
+              <span>{{ variant.title }}</span>
+            </button>
+          {% endfor %}
+        </div>
+      {% else %}
+        <select id="bundle-variant-select-{{ block.id }}" class="bundle-variant-select">
+          {% for variant in product.variants %}
+            <option
+              value="{{ variant.id }}"
+              data-price="{{ variant.price }}"
+              data-options='{{ variant.options | json | escape }}'
+              {% if variant.id == current_variant.id %}selected{% endif %}
+              {% unless variant.available %}disabled{% endunless %}
+            >
+              {{ variant.title }} - {{ variant.price | money }}{% unless variant.available %} - indisponible{% endunless %}
+            </option>
+          {% endfor %}
+        </select>
+      {% endif %}
+    </div>
+  {% endif %}
+
+  <div
+    class="bundle-offers"
+    id="bundle-offers-{{ block.id }}"
+    data-base-price="{{ unit_price }}"
+  >
+    {% assign qty_1 = 1 %}
+    {% assign qty_2 = 2 %}
+    {% assign qty_3 = 3 %}
+
+    {% assign total_1 = unit_price | times: qty_1 %}
+    {% assign total_2 = unit_price | times: qty_2 %}
+    {% assign total_3 = unit_price | times: qty_3 %}
+
+    {% assign discount_2 = block.settings.discount_percent_2 | default: 0 %}
+    {% assign discount_3 = block.settings.discount_percent_3 | default: 0 %}
+
+    {% assign discount_amount_2 = total_2 | times: discount_2 | divided_by: 100 %}
+    {% assign discount_amount_3 = total_3 | times: discount_3 | divided_by: 100 %}
+
+    {% assign final_2 = total_2 | minus: discount_amount_2 %}
+    {% assign final_3 = total_3 | minus: discount_amount_3 %}
+
+    <button
+      type="button"
+      class="bundle-offer"
+      data-pack="1"
+      data-variant-id="{{ current_variant.id }}"
+      data-quantity="1"
+    >
+      {% if block.settings.best_seller_pack == '1' %}
+        <span class="bundle-badge">{{ block.settings.best_seller_text }}</span>
+      {% endif %}
+      <span class="bundle-offer__title">1 produit</span>
+      <span class="bundle-offer__price" data-price-type="final">{{ total_1 | money }}</span>
+    </button>
+
+    <button
+      type="button"
+      class="bundle-offer"
+      data-pack="2"
+      data-variant-id="{{ current_variant.id }}"
+      data-quantity="2"
+      data-discount="{{ discount_2 }}"
+    >
+      {% if block.settings.best_seller_pack == '2' %}
+        <span class="bundle-badge">{{ block.settings.best_seller_text }}</span>
+      {% endif %}
+      <span class="bundle-offer__title">2 produits</span>
+      <span class="bundle-offer__subtitle">Économisez {{ discount_2 }}%</span>
+      <span class="bundle-offer__compare" data-price-type="compare"><s>{{ total_2 | money }}</s></span>
+      <span class="bundle-offer__price" data-price-type="final">{{ final_2 | money }}</span>
+    </button>
+
+    <button
+      type="button"
+      class="bundle-offer"
+      data-pack="3"
+      data-variant-id="{{ current_variant.id }}"
+      data-quantity="3"
+      data-discount="{{ discount_3 }}"
+    >
+      {% if block.settings.best_seller_pack == '3' %}
+        <span class="bundle-badge">{{ block.settings.best_seller_text }}</span>
+      {% endif %}
+      <span class="bundle-offer__title">3 produits</span>
+      <span class="bundle-offer__subtitle">Économisez {{ discount_3 }}%</span>
+      <span class="bundle-offer__compare" data-price-type="compare"><s>{{ total_3 | money }}</s></span>
+      <span class="bundle-offer__price" data-price-type="final">{{ final_3 | money }}</span>
+    </button>
+  </div>
+</div>
+
+<style>
+  .bundle-block {
+    border: 1px solid #e5e5e5;
+    border-radius: 12px;
+    padding: 16px;
+    margin: 16px 0;
+  }
+
+  .bundle-product {
+    display: flex;
+    gap: 16px;
+    align-items: center;
+    margin-bottom: 20px;
+  }
+
+  .bundle-product__media img {
+    border-radius: 10px;
+    object-fit: cover;
+  }
+
+  .bundle-product__infos h3 {
+    margin: 0 0 8px;
+  }
+
+  .bundle-product__infos p {
+    margin: 4px 0;
+  }
+
+  .bundle-variant-picker {
+    margin-bottom: 20px;
+  }
+
+  .bundle-variant-picker__label {
+    margin: 0 0 10px;
+    font-weight: 600;
+  }
+
+  .bundle-variant-select {
+    width: 100%;
+    padding: 10px;
+    border-radius: 10px;
+  }
+
+  .bundle-variant-thumbs {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(110px, 1fr));
+    gap: 10px;
+  }
+
+  .bundle-variant-thumb {
+    border: 1px solid #d9d9d9;
+    border-radius: 10px;
+    padding: 8px;
+    background: #fff;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    align-items: center;
+    text-align: center;
+  }
+
+  .bundle-variant-thumb.is-active {
+    border-color: #111;
+  }
+
+  .bundle-variant-thumb img {
+    border-radius: 8px;
+    object-fit: cover;
+  }
+
+  .bundle-offers {
+    display: grid;
+    gap: 12px;
+  }
+
+  .bundle-offer {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+    width: 100%;
+    border: 1px solid #d9d9d9;
+    border-radius: 10px;
+    padding: 14px;
+    background: #fff;
+    cursor: pointer;
+    text-align: left;
+  }
+
+  .bundle-offer:hover {
+    border-color: #111;
+  }
+
+  .bundle-badge {
+    position: absolute;
+    top: -10px;
+    right: 12px;
+    background: #111;
+    color: #fff;
+    border-radius: 999px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  .bundle-offer__title {
+    font-weight: 700;
+  }
+
+  .bundle-offer__subtitle {
+    font-size: 14px;
+    opacity: 0.8;
+  }
+
+  .bundle-offer__compare {
+    font-size: 14px;
+    opacity: 0.7;
+  }
+
+  .bundle-offer__price {
+    font-size: 18px;
+    font-weight: 700;
+  }
+</style>
+
+<script>
+  (() => {
+    const moneyFormat = {{ shop.money_format | json }};
+    const root = document.currentScript.closest('.bundle-block');
+    if (!root) return;
+
+    let selectedVariantId = Number(root.dataset.initialVariantId);
+
+    const productImage = root.querySelector('#bundle-product-image-{{ block.id }}');
+    const productPrice = root.querySelector('#bundle-product-price-{{ block.id }} strong');
+    const colorLine = root.querySelector('#bundle-product-color-{{ block.id }}');
+
+    const offers = root.querySelectorAll('.bundle-offer');
+    const thumbs = root.querySelectorAll('.bundle-variant-thumb');
+    const select = root.querySelector('#bundle-variant-select-{{ block.id }}');
+
+    function formatMoney(cents) {
+      const amount = (cents / 100).toFixed(2).replace('.', ',');
+      return moneyFormat
+        .replace('{{ amount }}', amount)
+        .replace('{{ amount_no_decimals }}', Math.round(cents / 100));
+    }
+
+    function updateOfferPrices(basePrice) {
+      offers.forEach((offer) => {
+        const qty = Number(offer.dataset.quantity || 1);
+        const discount = Number(offer.dataset.discount || 0);
+
+        const compare = basePrice * qty;
+        const finalPrice = compare - (compare * discount / 100);
+
+        const compareNode = offer.querySelector('[data-price-type="compare"]');
+        const finalNode = offer.querySelector('[data-price-type="final"]');
+
+        if (compareNode && qty > 1) {
+          compareNode.innerHTML = `<s>${formatMoney(compare)}</s>`;
+        }
+
+        if (finalNode) {
+          finalNode.textContent = formatMoney(finalPrice);
+        }
+
+        offer.dataset.variantId = selectedVariantId;
+      });
+    }
+
+    function updateColor(options) {
+      if (!colorLine) return;
+      const color = Array.isArray(options)
+        ? options.find(value => typeof value === 'string')
+        : null;
+
+      if (color) {
+        colorLine.style.display = '';
+        colorLine.textContent = `Couleur : ${color}`;
+      }
+    }
+
+    function setActiveThumb(variantId) {
+      thumbs.forEach((thumb) => {
+        thumb.classList.toggle('is-active', Number(thumb.dataset.variantId) === Number(variantId));
+      });
+    }
+
+    function applyVariantData({ id, price, image, options }) {
+      selectedVariantId = Number(id);
+
+      if (productPrice) {
+        productPrice.textContent = formatMoney(Number(price));
+      }
+
+      if (productImage && image) {
+        productImage.src = image;
+      }
+
+      updateColor(options);
+      updateOfferPrices(Number(price));
+      setActiveThumb(id);
+    }
+
+    thumbs.forEach((thumb) => {
+      thumb.addEventListener('click', () => {
+        applyVariantData({
+          id: thumb.dataset.variantId,
+          price: thumb.dataset.variantPrice,
+          image: thumb.dataset.variantImage,
+          options: JSON.parse(thumb.dataset.variantOptions || '[]')
+        });
+      });
+    });
+
+    if (select) {
+      select.addEventListener('change', (event) => {
+        const option = event.target.selectedOptions[0];
+        applyVariantData({
+          id: option.value,
+          price: option.dataset.price,
+          image: '',
+          options: JSON.parse(option.dataset.options || '[]')
+        });
+      });
+    }
+
+    offers.forEach((button) => {
+      button.addEventListener('click', async () => {
+        const variantId = Number(button.dataset.variantId);
+        const quantity = Number(button.dataset.quantity);
+
+        if (!variantId || !quantity) return;
+
+        const initialText = button.innerHTML;
+        button.disabled = true;
+        button.innerHTML = '<span>Ajout...</span>';
+
+        try {
+          const response = await fetch('/cart/add.js', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json'
+            },
+            body: JSON.stringify({
+              items: [
+                {
+                  id: variantId,
+                  quantity: quantity
+                }
+              ]
+            })
+          });
+
+          if (!response.ok) {
+            throw new Error('Erreur ajout panier');
+          }
+
+          window.location.href = '/cart';
+        } catch (error) {
+          console.error(error);
+          button.disabled = false;
+          button.innerHTML = initialText;
+          alert('Impossible d’ajouter le bundle au panier.');
+        }
+      });
+    });
+  })();
+</script>
+
+{% schema %}
+{
+  "name": "Bundle quantité produit",
+  "target": "section",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_variant_picker",
+      "label": "Afficher le sélecteur de variantes par article",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_variant_thumbnails",
+      "label": "Afficher les miniatures des variantes",
+      "default": false
+    },
+    {
+      "type": "select",
+      "id": "best_seller_pack",
+      "label": "Pack avec badge Best seller",
+      "default": "3",
+      "options": [
+        { "value": "none", "label": "Aucun" },
+        { "value": "1", "label": "Pack 1" },
+        { "value": "2", "label": "Pack 2" },
+        { "value": "3", "label": "Pack 3" }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "best_seller_text",
+      "label": "Texte du badge",
+      "default": "Best seller"
+    },
+    {
+      "type": "range",
+      "id": "discount_percent_2",
+      "label": "Réduction pour 2 produits (%)",
+      "min": 0,
+      "max": 50,
+      "step": 1,
+      "default": 10
+    },
+    {
+      "type": "range",
+      "id": "discount_percent_3",
+      "label": "Réduction pour 3 produits (%)",
+      "min": 0,
+      "max": 70,
+      "step": 1,
+      "default": 15
+    }
+  ]
+}
+{% endschema %}
