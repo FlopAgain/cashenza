@@ -1,0 +1,47 @@
+query CartInput {
+  cart {
+    lines {
+      id
+      quantity
+      bundleId: attribute(key: "_bundle_id") {
+        value
+      }
+      bundleOfferId: attribute(key: "_bundle_offer_id") {
+        value
+      }
+      bundleGroupId: attribute(key: "_bundle_group_id") {
+        value
+      }
+      bundleOfferTitle: attribute(key: "_bundle_offer_title") {
+        value
+      }
+      bundleOfferSize: attribute(key: "_bundle_offer_size") {
+        value
+      }
+      bundleDiscountType: attribute(key: "_bundle_discount_type") {
+        value
+      }
+      bundleDiscountValue: attribute(key: "_bundle_discount_value") {
+        value
+      }
+      bundleItemIndex: attribute(key: "_bundle_item_index") {
+        value
+      }
+      cost {
+        amountPerQuantity {
+          amount
+        }
+        subtotalAmount {
+          amount
+        }
+      }
+    }
+  }
+  discount {
+    discountClasses
+    metafield(namespace: "$app:custom-bundle-discount", key: "function-configuration") {
+      jsonValue
+      value
+    }
+  }
+}

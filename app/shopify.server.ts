@@ -2,10 +2,15 @@ import "@shopify/shopify-app-react-router/adapters/node";
 import {
   ApiVersion,
   AppDistribution,
+  BillingInterval,
   shopifyApp,
 } from "@shopify/shopify-app-react-router/server";
 import { PrismaSessionStorage } from "@shopify/shopify-app-session-storage-prisma";
 import prisma from "./db.server";
+
+export const STARTER_PLAN = "Starter";
+export const STARTER_PLAN_PRICE = 8;
+export const STARTER_PLAN_CURRENCY = "USD";
 
 const shopify = shopifyApp({
   apiKey: process.env.SHOPIFY_API_KEY,
@@ -14,10 +19,22 @@ const shopify = shopifyApp({
   scopes: process.env.SCOPES?.split(","),
   appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
-  sessionStorage: new PrismaSessionStorage(prisma),
+  // Temporary cast while the scaffold packages resolve to duplicate Shopify API types.
+  sessionStorage: new PrismaSessionStorage(prisma) as never,
   distribution: AppDistribution.AppStore,
   future: {
     expiringOfflineAccessTokens: true,
+  },
+  billing: {
+    [STARTER_PLAN]: {
+      lineItems: [
+        {
+          amount: STARTER_PLAN_PRICE,
+          currencyCode: STARTER_PLAN_CURRENCY,
+          interval: BillingInterval.Every30Days,
+        },
+      ],
+    },
   },
   ...(process.env.SHOP_CUSTOM_DOMAIN
     ? { customShopDomains: [process.env.SHOP_CUSTOM_DOMAIN] }

@@ -9,8 +9,8 @@ generator client {
 // enough when changing adapters.
 // See https://www.prisma.io/docs/orm/reference/prisma-schema-reference#string for more information
 datasource db {
-  provider = "sqlite"
-  url      = "file:dev.sqlite"
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model Session {
@@ -31,4 +31,107 @@ model Session {
   emailVerified Boolean?  @default(false)
   refreshToken        String?
   refreshTokenExpires DateTime?
+}
+
+model AppSettings {
+  id                    String   @id @default(cuid())
+  shop                  String   @unique
+  appDisplayName        String   @default("Cashenza custom-bundle")
+  supportEmail          String?
+  defaultAddToCartLabel String   @default("Add selected bundle")
+  defaultSaveBadgeLabel String   @default("Save")
+  defaultTimerPrefix    String   @default("Offer ends in")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+}
+
+model Bundle {
+  id                    String         @id @default(cuid())
+  shop                  String
+  title                 String
+  productId             String
+  productTitle          String?
+  productHandle         String?
+  status                BundleStatus   @default(DRAFT)
+  bestSellerOfferId     String?
+  automaticDiscountId   String?
+  showVariantPicker     Boolean        @default(true)
+  showVariantThumbnails Boolean        @default(false)
+  designPreset          String         @default("soft")
+  primaryColor          String         @default("#8db28a")
+  textColor             String         @default("#1a2118")
+  heading               String         @default("Choose your bundle")
+  subheading            String         @default("Pick the offer that fits your customer best.")
+  eyebrow               String         @default("Bundle and save")
+  headingSize           Int            @default(28)
+  subheadingSize        Int            @default(16)
+  offerTitleSize        Int            @default(22)
+  offerPriceSize        Int            @default(24)
+  cardGap               Int            @default(12)
+  cardPadding           Int            @default(18)
+  offerRadius           Int            @default(24)
+  bestSellerBadgeColor  String         @default("#ffffff")
+  bestSellerBadgeText   String         @default("#1a2118")
+  saveBadgeColor        String         @default("#f1c500")
+  saveBadgeText         String         @default("#1a2118")
+  saveBadgePrefix       String         @default("Save")
+  showTimer             Boolean        @default(false)
+  timerEnd             String?
+  timerPrefix          String          @default("Offer ends in")
+  timerExpiredText     String          @default("Offer expired")
+  timerBackgroundColor String         @default("#1a2118")
+  timerTextColor       String         @default("#ffffff")
+  createdAt             DateTime       @default(now())
+  updatedAt             DateTime       @updatedAt
+  offers                BundleOffer[]
+
+  @@index([shop, status])
+}
+
+model BundleOffer {
+  id            String             @id @default(cuid())
+  bundleId      String
+  title         String
+  subtitle      String?
+  quantity      Int
+  discountType  BundleDiscountType @default(PERCENTAGE)
+  discountValue Float              @default(0)
+  isBestSeller  Boolean            @default(false)
+  sortOrder     Int                @default(0)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+  bundle        Bundle             @relation(fields: [bundleId], references: [id], onDelete: Cascade)
+  items         BundleOfferItem[]
+
+  @@index([bundleId, sortOrder])
+}
+
+model BundleOfferItem {
+  id                    String      @id @default(cuid())
+  offerId               String
+  productId             String
+  productTitle          String?
+  variantId             String?
+  variantTitle          String?
+  quantity              Int         @default(1)
+  allowVariantSelection Boolean     @default(false)
+  showVariantThumbnails Boolean     @default(false)
+  sortOrder             Int         @default(0)
+  createdAt             DateTime    @default(now())
+  updatedAt             DateTime    @updatedAt
+  offer                 BundleOffer @relation(fields: [offerId], references: [id], onDelete: Cascade)
+
+  @@index([offerId, sortOrder])
+}
+
+enum BundleStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+enum BundleDiscountType {
+  PERCENTAGE
+  FIXED_AMOUNT
+  FIXED_PRICE
 }

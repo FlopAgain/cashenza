@@ -79,21 +79,41 @@ For more information on the Shopify Dev MCP please read [the documentation](http
 
 ### Application Storage
 
-This template uses [Prisma](https://www.prisma.io/) to store session data, by default using an [SQLite](https://www.sqlite.org/index.html) database.
-The database is defined as a Prisma schema in `prisma/schema.prisma`.
+Cashenza custom-bundle now uses [PostgreSQL](https://www.postgresql.org/) through [Prisma](https://www.prisma.io/).
+The database schema lives in `prisma/schema.prisma`, and the app expects a standard `DATABASE_URL` environment variable.
 
-This use of SQLite works in production if your app runs as a single instance.
-The database that works best for you depends on the data your app needs and how it is queried.
-Here’s a short list of databases providers that provide a free tier to get started:
+This is the recommended setup for launch because PostgreSQL is a better fit than SQLite once the app is deployed beyond a single local machine.
 
-| Database   | Type             | Hosters                                                                                                                                                                                                                                    |
-| ---------- | ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| MySQL      | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mysql), [Planet Scale](https://planetscale.com/), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/mysql) |
-| PostgreSQL | SQL              | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-postgresql), [Amazon Aurora](https://aws.amazon.com/rds/aurora/), [Google Cloud SQL](https://cloud.google.com/sql/docs/postgres)                                   |
-| Redis      | Key-value        | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-redis), [Amazon MemoryDB](https://aws.amazon.com/memorydb/)                                                                                                        |
-| MongoDB    | NoSQL / Document | [Digital Ocean](https://www.digitalocean.com/products/managed-databases-mongodb), [MongoDB Atlas](https://www.mongodb.com/atlas/database)                                                                                                  |
+| Database   | Type | Hosters |
+| ---------- | ---- | ------- |
+| PostgreSQL | SQL  | [Neon](https://neon.com/), [Supabase](https://supabase.com/), [Railway](https://railway.com/), [Render](https://render.com/), [Google Cloud SQL](https://cloud.google.com/sql/docs/postgres) |
 
-To use one of these, you can use a different [datasource provider](https://www.prisma.io/docs/reference/api-reference/prisma-schema-reference#datasource) in your `schema.prisma` file, or a different [SessionStorage adapter package](https://github.com/Shopify/shopify-api-js/blob/main/packages/shopify-api/docs/guides/session-storage.md).
+#### Local database setup
+
+1. Copy `.env.example` to `.env`
+2. Put your PostgreSQL connection string in `DATABASE_URL`
+3. Run:
+
+```shell
+npm run db:generate
+npm run db:deploy
+```
+
+Or simply:
+
+```shell
+npm run setup
+```
+
+#### Production database setup
+
+Set `DATABASE_URL` in your host environment, then run:
+
+```shell
+npm run db:deploy
+```
+
+This project now ships with a PostgreSQL baseline migration in `prisma/migrations`.
 
 ### Build
 
@@ -135,10 +155,10 @@ When you reach the step for [setting up environment variables](https://shopify.d
 If you get an error like:
 
 ```
-The table `main.Session` does not exist in the current database.
+The table `public.Session` does not exist in the current database.
 ```
 
-Create the database for Prisma. Run the `setup` script in `package.json` using `npm`, `yarn` or `pnpm`.
+Create the database for Prisma and verify that `DATABASE_URL` points to your PostgreSQL instance. Then run the `setup` script in `package.json` using `npm`, `yarn` or `pnpm`.
 
 ### Navigating/redirecting breaks an embedded app
 
