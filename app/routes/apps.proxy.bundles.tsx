@@ -3,77 +3,9 @@ import type { LoaderFunctionArgs } from "react-router";
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
 import { syncBundleAutomaticDiscount } from "../utils/bundle-discount.server";
-
-type ProductSnapshot = {
-  id: string;
-  handle: string;
-  title: string;
-  featuredImage: string | null;
-  variants: Array<{
-    id: string;
-    title: string;
-    price: string;
-    featuredImage: string | null;
-    availableForSale: boolean;
-  }>;
-};
-
-async function loadProductSnapshots(
-  admin: NonNullable<Awaited<ReturnType<typeof authenticate.public.appProxy>>["admin"]>,
-  handles: string[],
-) {
-  const uniqueHandles = [...new Set(handles.filter(Boolean))];
-  const snapshots = new Map<string, ProductSnapshot>();
-
-  for (const handle of uniqueHandles) {
-    const response = await admin.graphql(
-      `#graphql
-        query ProductByHandle($handle: String!) {
-          productByHandle(handle: $handle) {
-            id
-            handle
-            title
-            featuredImage {
-              url
-            }
-            variants(first: 50) {
-              nodes {
-                id
-                title
-                price
-                availableForSale
-                image {
-                  url
-                }
-              }
-            }
-          }
-        }`,
-      { variables: { handle } },
-    );
-
-    const json = await response.json();
-    const product = json.data?.productByHandle;
-
-    if (!product) continue;
-
-    snapshots.set(handle, {
-      id: product.id,
-      handle: product.handle,
-      title: product.title,
-      featuredImage: product.featuredImage?.url || null,
-      variants: (product.variants?.nodes || []).map((variant: any) => ({
-        id: variant.id,
-        title: variant.title,
-        price: variant.price,
-        featuredImage: variant.image?.url || null,
-        availableForSale: variant.availableForSale,
-      })),
-    });
-  }
-
-  return snapshots;
-}
+import type { ProductSnapshotDraft } from "../utils/bundle-configurator";
+import { loadProductSnapshots } from "../utils/product-snapshots.server";
+import { normalizeVolumeBundleOfferItems } from "../utils/volume-bundles.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
@@ -103,9 +35,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       request.headers.get("x-shopify-shop-domain")?.trim() ||
       "";
 
-    const bundles = await prisma.bundle.findMany({
+    const crossSellBundles = await prisma.bundle.findMany({
       where: {
         ...(shop ? { shop } : {}),
+        bundleType: "CROSS_SELL",
         status: "ACTIVE",
         ...(productHandle ? { productHandle } : {}),
       },
@@ -123,8 +56,55 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       take: limit,
     });
 
+    const volumeBundle = productHandle
+      ? await prisma.bundle.findFirst({
+          where: {
+            ...(shop ? { shop } : {}),
+            bundleType: "VOLUME",
+            status: "ACTIVE",
+            productHandle,
+          },
+          orderBy: { updatedAt: "desc" },
+          include: {
+            offers: {
+              orderBy: { sortOrder: "asc" },
+              include: {
+                items: {
+                  orderBy: { sortOrder: "asc" },
+                },
+              },
+            },
+          },
+        })
+      : null;
+
+    const simpleBundleSetting = productHandle
+      ? await prisma.simpleBundleProductSetting.findUnique({
+          where: {
+            shop_productHandle: {
+              shop,
+              productHandle,
+            },
+        },
+        select: { enabled: true },
+      })
+      : null;
+    let resolvedVolumeBundle = volumeBundle;
+    if (resolvedVolumeBundle?.bundleType === "VOLUME") {
+      resolvedVolumeBundle = await normalizeVolumeBundleOfferItems(resolvedVolumeBundle.id);
+    }
+
+    const finalSelectedBundles =
+      crossSellBundles.length > 0
+        ? crossSellBundles
+        : simpleBundleSetting?.enabled === false
+          ? []
+          : resolvedVolumeBundle
+            ? [resolvedVolumeBundle]
+            : [];
+
     if (admin) {
-      for (const bundle of bundles as any[]) {
+      for (const bundle of finalSelectedBundles as any[]) {
         if (bundle.status !== "ACTIVE") continue;
 
         try {
@@ -146,10 +126,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       }
     }
 
-    let snapshots = new Map<string, ProductSnapshot>();
+    let snapshots = new Map<string, ProductSnapshotDraft | null>();
     if (admin) {
       try {
-        const productHandles = bundles.flatMap((bundle) =>
+        const productHandles = finalSelectedBundles.flatMap((bundle) =>
           bundle.offers.flatMap((offer) => offer.items.map((item) => item.productId)),
         );
         snapshots = await loadProductSnapshots(admin, productHandles);
@@ -166,42 +146,48 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ok: true,
       shop: shop || null,
       productHandle: productHandle || null,
+      simpleBundleEnabled: simpleBundleSetting?.enabled ?? true,
       productSnapshotsLoaded: Boolean(admin),
       authError,
-      bundles: bundles.map((bundle) => ({
-      id: bundle.id,
-      title: bundle.title,
-      productHandle: bundle.productHandle,
-      bestSellerOfferId: bundle.bestSellerOfferId,
-      showVariantPicker: bundle.showVariantPicker,
-      showVariantThumbnails: bundle.showVariantThumbnails,
-      appearance: {
-        designPreset: bundle.designPreset,
-        primaryColor: bundle.primaryColor,
-        textColor: bundle.textColor,
-        eyebrow: bundle.eyebrow,
-        heading: bundle.heading,
-        subheading: bundle.subheading,
-        headingSize: bundle.headingSize,
-        subheadingSize: bundle.subheadingSize,
-        offerTitleSize: bundle.offerTitleSize,
-        offerPriceSize: bundle.offerPriceSize,
-        cardGap: bundle.cardGap,
-        cardPadding: bundle.cardPadding,
-        offerRadius: bundle.offerRadius,
-        bestSellerBadgeColor: bundle.bestSellerBadgeColor,
-        bestSellerBadgeText: bundle.bestSellerBadgeText,
-        saveBadgeColor: bundle.saveBadgeColor,
-        saveBadgeText: bundle.saveBadgeText,
-        saveBadgePrefix: bundle.saveBadgePrefix,
-        showTimer: bundle.showTimer,
-        timerEnd: bundle.timerEnd,
-        timerPrefix: bundle.timerPrefix,
-        timerExpiredText: bundle.timerExpiredText,
-        timerBackgroundColor: bundle.timerBackgroundColor,
-        timerTextColor: bundle.timerTextColor,
-      },
-      offers: bundle.offers.map((offer) => ({
+      bundles: finalSelectedBundles.map((bundle) => ({
+        id: bundle.id,
+        bundleType: bundle.bundleType,
+        title: bundle.title,
+        productHandle: bundle.productHandle,
+        bestSellerOfferId: bundle.bestSellerOfferId,
+        showVariantPicker: bundle.showVariantPicker,
+        showVariantThumbnails: bundle.showVariantThumbnails,
+        appearance: {
+          designPreset: bundle.designPreset,
+          timerPreset: (bundle as any).timerPreset || "soft",
+          effectsPreset: (bundle as any).effectsPreset || "none",
+          primaryColor: bundle.primaryColor,
+          textColor: bundle.textColor,
+          eyebrow: bundle.eyebrow,
+          heading: bundle.heading,
+          subheading: bundle.subheading,
+          headingSize: bundle.headingSize,
+          subheadingSize: bundle.subheadingSize,
+          offerTitleSize: bundle.offerTitleSize,
+          offerPriceSize: bundle.offerPriceSize,
+          cardGap: bundle.cardGap,
+          cardPadding: bundle.cardPadding,
+          offerRadius: bundle.offerRadius,
+          bestSellerBadgePreset: bundle.bestSellerBadgePreset,
+          bestSellerPngBadgePreset: (bundle as any).bestSellerPngBadgePreset || "none",
+          bestSellerBadgeColor: bundle.bestSellerBadgeColor,
+          bestSellerBadgeText: bundle.bestSellerBadgeText,
+          saveBadgeColor: bundle.saveBadgeColor,
+          saveBadgeText: bundle.saveBadgeText,
+          saveBadgePrefix: bundle.saveBadgePrefix,
+          showTimer: bundle.showTimer,
+          timerEnd: bundle.timerEnd,
+          timerPrefix: bundle.timerPrefix,
+          timerExpiredText: bundle.timerExpiredText,
+          timerBackgroundColor: bundle.timerBackgroundColor,
+          timerTextColor: bundle.timerTextColor,
+        },
+        offers: bundle.offers.map((offer) => ({
           id: offer.id,
           title: offer.title,
           subtitle: offer.subtitle,

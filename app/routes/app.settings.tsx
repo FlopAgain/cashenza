@@ -20,7 +20,10 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       where: { shop: session.shop },
     }),
     prisma.bundle.findMany({
-      where: { shop: session.shop },
+      where: {
+        shop: session.shop,
+        bundleType: { in: ["CROSS_SELL", "VOLUME"] as any },
+      },
       select: {
         id: true,
         title: true,
@@ -38,9 +41,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const activeBundles = bundles.filter((bundle) => bundle.status === "ACTIVE");
   const syncedBundles = activeBundles.filter((bundle) => Boolean(bundle.automaticDiscountId));
 
-  return {
-    settings: settings ?? {
-      appDisplayName: "Cashenza custom-bundle",
+    return {
+      settings: settings ?? {
+      appDisplayName: "Cashenza Bundlify",
       supportEmail: "",
       defaultAddToCartLabel: "Add selected bundle",
       defaultSaveBadgeLabel: "Save",
@@ -62,7 +65,11 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   if (intent === "resync") {
     const activeBundles = await prisma.bundle.findMany({
-      where: { shop: session.shop, status: "ACTIVE" },
+      where: {
+        shop: session.shop,
+        bundleType: { in: ["CROSS_SELL", "VOLUME"] as any },
+        status: "ACTIVE",
+      },
       include: {
         offers: {
           orderBy: { sortOrder: "asc" },
@@ -118,7 +125,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   });
 
   return {
-    success: "Cashenza custom-bundle settings saved.",
+    success: "Cashenza Bundlify settings saved.",
   } satisfies ActionData;
 };
 
@@ -129,7 +136,7 @@ export default function SettingsPage() {
   const isSubmitting = navigation.state === "submitting";
 
   return (
-    <s-page heading="Cashenza custom-bundle settings">
+    <s-page heading="Cashenza Bundlify settings">
       {actionData?.success ? <s-banner tone="success">{actionData.success}</s-banner> : null}
       {actionData?.error ? <s-banner tone="critical">{actionData.error}</s-banner> : null}
 
@@ -198,9 +205,9 @@ export default function SettingsPage() {
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Discount sync health</h2>
             <div style={styles.stack}>
-              <StatRow label="Total bundles" value={String(stats.totalBundles)} />
+              <StatRow label="Total configured bundles" value={String(stats.totalBundles)} />
               <StatRow label="Active bundles" value={String(stats.activeBundles)} />
-              <StatRow label="Synced discounts" value={String(stats.syncedBundles)} />
+              <StatRow label="Synced automatic discounts" value={String(stats.syncedBundles)} />
               <StatRow label="Needs attention" value={String(stats.unsyncedBundles)} />
             </div>
 
@@ -215,9 +222,9 @@ export default function SettingsPage() {
           <div style={styles.card}>
             <h2 style={styles.cardTitle}>Why this matters</h2>
             <ul style={styles.list}>
-              <li>Support gets easier when you can verify discount sync instantly.</li>
-              <li>Global labels prepare the app for future storefront-level defaults.</li>
-              <li>This page gives the product a more complete SaaS feel before launch.</li>
+              <li>Support gets easier when you can verify sync for both volume and cross-sell bundles.</li>
+              <li>Global labels prepare the app for the style-only theme editor direction.</li>
+              <li>This page keeps launch-critical merchant defaults in one predictable place.</li>
             </ul>
           </div>
         </aside>

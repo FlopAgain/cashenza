@@ -11,7 +11,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
 export default function AdditionalPage() {
   return (
-    <s-page heading="Cashenza custom-bundle launch plan">
+    <s-page heading="Cashenza Bundlify launch plan">
       <section style={styles.hero}>
         <div>
           <span style={styles.badge}>Beta-to-market checklist</span>

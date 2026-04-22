@@ -1,0 +1,16 @@
+<svg width="100%" viewBox="0 0 690 690" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+  <title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Cashenza wordmark carrÃ©</title>
+  <desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Cashenza en format carrÃ©, gold sur fond sombre</desc>
+  <defs>
+    <linearGradient id="gg3" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F0D878"/>
+      <stop offset="50%" stop-color="#C9A84C"/>
+      <stop offset="100%" stop-color="#7A5510"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="680" height="680" rx="60" fill="#0E0B09" style="fill:rgb(14, 11, 9);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <rect width="680" height="680" rx="60" fill="none" stroke="#C9A84C" stroke-width="1" opacity=".4" style="fill:none;stroke:rgb(201, 168, 76);color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.4;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <text x="340" y="390" text-anchor="middle" font-family="Cinzel, Georgia, serif" font-size="80" font-weight="700" fill="url(#gg3)" letter-spacing="4" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Cinzel, Georgia, serif;font-size:80px;font-weight:700;text-anchor:middle;dominant-baseline:auto">CASHENZA</text>
+</svg>

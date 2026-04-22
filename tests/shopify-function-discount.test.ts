@@ -83,6 +83,7 @@ test("shopify function preserves static fixed-price bundles across multiple line
           quantity: 2,
           cost: { amountPerQuantity: { amount: "30.00" }, subtotalAmount: { amount: "60.00" } },
           bundleGroupId: { value: "static-group-1" },
+          bundleOfferSize: { value: "2" },
           bundleItemIndex: { value: "1" },
           bundleDiscountType: { value: "FIXED_PRICE" },
           bundleDiscountValue: { value: "50" },
@@ -93,6 +94,7 @@ test("shopify function preserves static fixed-price bundles across multiple line
           quantity: 1,
           cost: { amountPerQuantity: { amount: "40.00" }, subtotalAmount: { amount: "40.00" } },
           bundleGroupId: { value: "static-group-1" },
+          bundleOfferSize: { value: "2" },
           bundleItemIndex: { value: "2" },
           bundleDiscountType: { value: "FIXED_PRICE" },
           bundleDiscountValue: { value: "50" },
@@ -106,6 +108,43 @@ test("shopify function preserves static fixed-price bundles across multiple line
   assert.equal(candidates.length, 2);
   assert.equal(
     candidates.reduce((sum: number, candidate: any) => sum + candidate.value.fixedAmount.amount, 0),
-    50,
+    20,
   );
+});
+
+test("shopify function removes static bundle discount when a bundle item is missing from cart", () => {
+  const result = cartLinesDiscountsGenerateRun({
+    discount: {
+      discountClasses: ["PRODUCT"],
+      metafield: null,
+    },
+    cart: {
+      lines: [
+        {
+          id: "line-red",
+          quantity: 1,
+          cost: { amountPerQuantity: { amount: "30.00" }, subtotalAmount: { amount: "30.00" } },
+          bundleGroupId: { value: "static-group-2" },
+          bundleOfferSize: { value: "3" },
+          bundleItemIndex: { value: "1" },
+          bundleDiscountType: { value: "PERCENTAGE" },
+          bundleDiscountValue: { value: "15" },
+          bundleOfferTitle: { value: "Default trio" },
+        },
+        {
+          id: "line-blue",
+          quantity: 1,
+          cost: { amountPerQuantity: { amount: "40.00" }, subtotalAmount: { amount: "40.00" } },
+          bundleGroupId: { value: "static-group-2" },
+          bundleOfferSize: { value: "3" },
+          bundleItemIndex: { value: "3" },
+          bundleDiscountType: { value: "PERCENTAGE" },
+          bundleDiscountValue: { value: "15" },
+          bundleOfferTitle: { value: "Default trio" },
+        },
+      ],
+    },
+  } as any);
+
+  assert.deepEqual(result.operations, []);
 });

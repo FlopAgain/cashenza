@@ -19,6 +19,10 @@ export default function App() {
     <AppProvider embedded apiKey={apiKey}>
       <ui-nav-menu>
         <s-link href="/app">Dashboard</s-link>
+        <s-link href="/app/volume-bundles">Volume bundles</s-link>
+        <s-link href="/app/cross-sell-bundles">Cross-sell bundles</s-link>
+        <s-link href="/app/analytics">Analytics</s-link>
+        <s-link href="/app/diagnostics">Diagnostics</s-link>
         <s-link href="/app/billing">Billing</s-link>
         <s-link href="/app/settings">Settings</s-link>
         <s-link href="/app/additional">Launch plan</s-link>

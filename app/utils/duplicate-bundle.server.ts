@@ -23,11 +23,14 @@ type SourceBundleOffer = {
 
 type SourceBundle = {
   shop: string;
+  bundleType?: "CROSS_SELL" | "VOLUME";
   title: string;
   productId: string;
   productTitle: string | null;
   productHandle: string | null;
   designPreset: string;
+  timerPreset: string;
+  effectsPreset: string;
   primaryColor: string;
   textColor: string;
   eyebrow: string;
@@ -40,6 +43,8 @@ type SourceBundle = {
   cardGap: number;
   cardPadding: number;
   offerRadius: number;
+  bestSellerBadgePreset: string;
+  bestSellerPngBadgePreset: string;
   bestSellerBadgeColor: string;
   bestSellerBadgeText: string;
   saveBadgeColor: string;
@@ -60,6 +65,7 @@ type SourceBundle = {
 export function buildDuplicatedBundleData(bundle: SourceBundle) {
   return {
     shop: bundle.shop,
+    bundleType: bundle.bundleType || "CROSS_SELL",
     title: `${bundle.title} Copy`,
     productId: bundle.productId,
     productTitle: bundle.productTitle,
@@ -69,6 +75,8 @@ export function buildDuplicatedBundleData(bundle: SourceBundle) {
     showVariantPicker: bundle.showVariantPicker,
     showVariantThumbnails: bundle.showVariantThumbnails,
     designPreset: bundle.designPreset,
+    timerPreset: bundle.timerPreset,
+    effectsPreset: bundle.effectsPreset,
     primaryColor: bundle.primaryColor,
     textColor: bundle.textColor,
     eyebrow: bundle.eyebrow,
@@ -81,6 +89,8 @@ export function buildDuplicatedBundleData(bundle: SourceBundle) {
     cardGap: bundle.cardGap,
     cardPadding: bundle.cardPadding,
     offerRadius: bundle.offerRadius,
+    bestSellerBadgePreset: bundle.bestSellerBadgePreset,
+    bestSellerPngBadgePreset: bundle.bestSellerPngBadgePreset,
     bestSellerBadgeColor: bundle.bestSellerBadgeColor,
     bestSellerBadgeText: bundle.bestSellerBadgeText,
     saveBadgeColor: bundle.saveBadgeColor,

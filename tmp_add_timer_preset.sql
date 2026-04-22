@@ -1,0 +1,2 @@
+ALTER TABLE "Bundle"
+ADD COLUMN IF NOT EXISTS "timerPreset" TEXT NOT NULL DEFAULT 'soft';

@@ -16,6 +16,7 @@ type AdminGraphqlClient = {
 
 type PersistedBundleForDiscount = {
   id: string;
+  bundleType: "CROSS_SELL" | "VOLUME";
   title: string;
   status: "DRAFT" | "ACTIVE" | "ARCHIVED";
   automaticDiscountId: string | null;
@@ -45,8 +46,29 @@ type DiscountMutationResult = {
   }>;
 };
 
+type AutomaticDiscountNodeResult = {
+  automaticDiscountNode?: {
+    id?: string | null;
+    automaticDiscount?:
+      | {
+          status?: string | null;
+        }
+      | null;
+  } | null;
+};
+
+type DiscountLifecycleStatus = "ACTIVE" | "EXPIRED" | "SCHEDULED" | "MISSING" | "UNKNOWN";
+
 export function bundleDiscountTitle(bundleTitle: string) {
-  return `Bundle discount - ${bundleTitle}`;
+  return `Cashenza cross-sell Bundle - ${bundleTitle}`;
+}
+
+export function bundleVolumeDiscountTitle(bundleTitle: string) {
+  const cleanTitle = String(bundleTitle || "")
+    .replace(/\s*volume bundle\s*$/i, "")
+    .trim();
+
+  return `Cashenza volume Bundle - ${cleanTitle || bundleTitle}`;
 }
 
 export function assertNoUserErrors(payload: DiscountMutationResult | undefined, action: string) {
@@ -114,6 +136,53 @@ export function buildDiscountConfig(bundle: PersistedBundleForDiscount) {
   };
 }
 
+function getDiscountStartsAt(bundle: PersistedBundleForDiscount) {
+  if (bundle.status === "ACTIVE") {
+    return new Date().toISOString();
+  }
+
+  // Shopify automatic discounts derive their status from dates. Use a past
+  // window so the discount remains present but shows as expired / inactive.
+  return new Date("2000-01-01T00:00:00.000Z").toISOString();
+}
+
+function getDiscountEndsAt(bundle: PersistedBundleForDiscount) {
+  if (bundle.status === "ACTIVE") {
+    return null;
+  }
+
+  return new Date("2000-01-02T00:00:00.000Z").toISOString();
+}
+
+function buildAutomaticDiscountInput(bundle: PersistedBundleForDiscount, functionId: string) {
+  const title =
+    bundle.bundleType === "CROSS_SELL"
+      ? bundleDiscountTitle(bundle.title)
+      : bundleVolumeDiscountTitle(bundle.title);
+
+  const input: Record<string, unknown> = {
+    title,
+    functionId,
+    startsAt: getDiscountStartsAt(bundle),
+    discountClasses: ["PRODUCT"],
+    metafields: [
+      {
+        namespace: DISCOUNT_CONFIG_NAMESPACE,
+        key: DISCOUNT_CONFIG_KEY,
+        type: "json",
+        value: JSON.stringify(buildDiscountConfig(bundle)),
+      },
+    ],
+  };
+
+  const endsAt = getDiscountEndsAt(bundle);
+  if (endsAt) {
+    input.endsAt = endsAt;
+  }
+
+  return input;
+}
+
 async function createAutomaticDiscount(
   admin: AdminGraphqlClient,
   bundle: PersistedBundleForDiscount,
@@ -135,20 +204,7 @@ async function createAutomaticDiscount(
       }`,
     {
       variables: {
-        automaticAppDiscount: {
-          title: bundleDiscountTitle(bundle.title),
-          functionId,
-          startsAt: new Date().toISOString(),
-          discountClasses: ["PRODUCT"],
-          metafields: [
-            {
-              namespace: DISCOUNT_CONFIG_NAMESPACE,
-              key: DISCOUNT_CONFIG_KEY,
-              type: "json",
-              value: JSON.stringify(buildDiscountConfig(bundle)),
-            },
-          ],
-        },
+        automaticAppDiscount: buildAutomaticDiscountInput(bundle, functionId),
       },
     },
   );
@@ -191,20 +247,7 @@ async function updateAutomaticDiscount(
     {
       variables: {
         id: automaticDiscountId,
-        automaticAppDiscount: {
-          title: bundleDiscountTitle(bundle.title),
-          functionId,
-          startsAt: new Date().toISOString(),
-          discountClasses: ["PRODUCT"],
-          metafields: [
-            {
-              namespace: DISCOUNT_CONFIG_NAMESPACE,
-              key: DISCOUNT_CONFIG_KEY,
-              type: "json",
-              value: JSON.stringify(buildDiscountConfig(bundle)),
-            },
-          ],
-        },
+        automaticAppDiscount: buildAutomaticDiscountInput(bundle, functionId),
       },
     },
   );
@@ -250,6 +293,83 @@ export async function deleteBundleAutomaticDiscount(
   }
 }
 
+export async function loadAutomaticDiscountStatus(
+  admin: AdminGraphqlClient,
+  automaticDiscountId: string,
+) {
+  const response = await admin.graphql(
+    `#graphql
+      query BundleAutomaticDiscountStatus($id: ID!) {
+        automaticDiscountNode(id: $id) {
+          id
+          automaticDiscount {
+            ... on DiscountAutomaticApp {
+              status
+            }
+          }
+        }
+      }`,
+    { variables: { id: automaticDiscountId } },
+  );
+
+  const json = await response.json();
+  const payload = json.data as AutomaticDiscountNodeResult | undefined;
+  const node = payload?.automaticDiscountNode;
+  const status = String(node?.automaticDiscount?.status || "").toUpperCase();
+
+  if (!node) {
+    return "MISSING";
+  }
+
+  if (status === "ACTIVE" || status === "EXPIRED" || status === "SCHEDULED") {
+    return status as DiscountLifecycleStatus;
+  }
+
+  return "UNKNOWN";
+}
+
+export async function reconcileBundleAutomaticDiscountState(
+  admin: AdminGraphqlClient,
+  bundle: {
+    id: string;
+    status: "DRAFT" | "ACTIVE" | "ARCHIVED";
+    automaticDiscountId: string | null;
+  },
+) {
+  if (!bundle.automaticDiscountId) {
+    return {
+      shopifyDiscountStatus: "MISSING" as DiscountLifecycleStatus,
+      bundleStatus: bundle.status,
+      automaticDiscountId: null as string | null,
+    };
+  }
+
+  const shopifyDiscountStatus = await loadAutomaticDiscountStatus(admin, bundle.automaticDiscountId);
+  const nextBundleStatus =
+    shopifyDiscountStatus === "ACTIVE" ? "ACTIVE" : ("DRAFT" as const);
+  const nextAutomaticDiscountId =
+    shopifyDiscountStatus === "MISSING" ? null : bundle.automaticDiscountId;
+
+  if (
+    nextBundleStatus !== bundle.status ||
+    nextAutomaticDiscountId !== bundle.automaticDiscountId
+  ) {
+    await prisma.bundle.update({
+      where: { id: bundle.id },
+      data: {
+        status: nextBundleStatus,
+        automaticDiscountId: nextAutomaticDiscountId,
+      } as any,
+    });
+  }
+
+  return {
+    shopifyDiscountStatus,
+    bundleStatus: nextBundleStatus,
+    automaticDiscountId: nextAutomaticDiscountId,
+  };
+}
+
 export async function syncBundleAutomaticDiscount(
   admin: AdminGraphqlClient,
   bundle: PersistedBundleForDiscount,
@@ -258,10 +378,20 @@ export async function syncBundleAutomaticDiscount(
 
   if (bundle.status !== "ACTIVE") {
     if (bundle.automaticDiscountId) {
-      await deleteBundleAutomaticDiscount(admin, bundle.automaticDiscountId);
+      try {
+        await updateAutomaticDiscount(
+          admin,
+          bundle,
+          bundle.automaticDiscountId,
+          functionId,
+        );
+        return bundle.automaticDiscountId;
+      } catch {
+        await deleteBundleAutomaticDiscount(admin, bundle.automaticDiscountId);
+      }
     }
 
-    return null;
+    return createAutomaticDiscount(admin, bundle, functionId);
   }
 
   if (bundle.automaticDiscountId) {
@@ -281,3 +411,4 @@ export async function syncBundleAutomaticDiscount(
 
   return createAutomaticDiscount(admin, bundle, functionId);
 }
+import prisma from "../db.server";

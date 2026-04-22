@@ -45,9 +45,24 @@ model AppSettings {
   updatedAt             DateTime @updatedAt
 }
 
+model SimpleBundleProductSetting {
+  id            String   @id @default(cuid())
+  shop          String
+  productId     String?
+  productTitle  String?
+  productHandle String
+  enabled       Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@unique([shop, productHandle])
+  @@index([shop, enabled])
+}
+
 model Bundle {
   id                    String         @id @default(cuid())
   shop                  String
+  bundleType            BundleType     @default(CROSS_SELL)
   title                 String
   productId             String
   productTitle          String?
@@ -58,6 +73,8 @@ model Bundle {
   showVariantPicker     Boolean        @default(true)
   showVariantThumbnails Boolean        @default(false)
   designPreset          String         @default("soft")
+  timerPreset           String         @default("soft")
+  effectsPreset         String         @default("none")
   primaryColor          String         @default("#8db28a")
   textColor             String         @default("#1a2118")
   heading               String         @default("Choose your bundle")
@@ -70,6 +87,8 @@ model Bundle {
   cardGap               Int            @default(12)
   cardPadding           Int            @default(18)
   offerRadius           Int            @default(24)
+  bestSellerBadgePreset String         @default("pill")
+  bestSellerPngBadgePreset String      @default("none")
   bestSellerBadgeColor  String         @default("#ffffff")
   bestSellerBadgeText   String         @default("#1a2118")
   saveBadgeColor        String         @default("#f1c500")
@@ -85,7 +104,8 @@ model Bundle {
   updatedAt             DateTime       @updatedAt
   offers                BundleOffer[]
 
-  @@index([shop, status])
+  @@index([shop, bundleType, status])
+  @@index([shop, bundleType, productHandle])
 }
 
 model BundleOffer {
@@ -124,14 +144,46 @@ model BundleOfferItem {
   @@index([offerId, sortOrder])
 }
 
+model BundleAnalyticsEvent {
+  id           String                   @id @default(cuid())
+  shop         String
+  bundleType   BundleType
+  eventType    BundleAnalyticsEventType
+  bundleId     String?
+  offerId      String?
+  productHandle String?
+  sessionId    String?
+  offerPosition Int?
+  offerQuantity Int?
+  metadata     Json?
+  createdAt    DateTime                 @default(now())
+
+  @@index([shop, createdAt])
+  @@index([shop, bundleType, eventType, createdAt])
+  @@index([bundleId, offerId, createdAt])
+}
+
 enum BundleStatus {
   DRAFT
   ACTIVE
   ARCHIVED
 }
 
+enum BundleType {
+  CROSS_SELL
+  VOLUME
+}
+
 enum BundleDiscountType {
   PERCENTAGE
   FIXED_AMOUNT
   FIXED_PRICE
+}
+
+enum BundleAnalyticsEventType {
+  BUNDLE_IMPRESSION
+  OFFER_SELECTED
+  ADD_TO_CART
+  BUY_NOW
+  ADD_TO_CART_FAILED
 }

@@ -1,0 +1,23 @@
+<svg width="100%" viewBox="0 0 690 690" role="img" xmlns="http://www.w3.org/2000/svg" style="">
+  <title style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Cashenza icône C</title>
+  <desc style="fill:rgb(0, 0, 0);stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto">Icône Cashenza avec ₵ centré</desc>
+  <defs>
+    <linearGradient id="gbg6" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#161210"/>
+      <stop offset="100%" stop-color="#0A0806"/>
+    </linearGradient>
+    <linearGradient id="gg8" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#F0D878"/>
+      <stop offset="50%" stop-color="#C9A84C"/>
+      <stop offset="100%" stop-color="#7A5510"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="680" height="680" rx="100" fill="url(#gbg6)" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <rect width="680" height="680" rx="100" fill="none" stroke="url(#gg8)" stroke-width="2" style="fill:none;color:rgb(255, 255, 255);stroke-width:2px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <circle cx="340" cy="340" r="230" fill="none" stroke="url(#gg8)" stroke-width="2" style="fill:none;color:rgb(255, 255, 255);stroke-width:2px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+  <circle cx="340" cy="340" r="170" fill="none" stroke="#C9A84C" stroke-width="0.8" opacity=".35" style="fill:none;stroke:rgb(201, 168, 76);color:rgb(255, 255, 255);stroke-width:0.8px;stroke-linecap:butt;stroke-linejoin:miter;opacity:0.35;font-family:&quot;Anthropic Sans&quot;, -apple-system, BlinkMacSystemFont, &quot;Segoe UI&quot;, sans-serif;font-size:16px;font-weight:400;text-anchor:start;dominant-baseline:auto"/>
+
+  <text x="332" y="340" text-anchor="middle" dominant-baseline="central" font-family="Cinzel, Georgia, serif" font-size="280" font-weight="400" fill="url(#gg8)" dy="-10" style="stroke:none;color:rgb(255, 255, 255);stroke-width:1px;stroke-linecap:butt;stroke-linejoin:miter;opacity:1;font-family:Cinzel, Georgia, serif;font-size:280px;font-weight:400;text-anchor:middle;dominant-baseline:central">₵</text>
+</svg>

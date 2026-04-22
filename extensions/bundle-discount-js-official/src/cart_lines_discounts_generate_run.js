@@ -46,6 +46,7 @@ const ProductDiscountSelectionStrategy = {
  *   lineId: string;
  *   groupId: string;
  *   offerTitle: string;
+ *   offerSize: number;
  *   discountType: string;
  *   discountValue: number;
  *   itemIndex: number;
@@ -112,6 +113,7 @@ function extractStaticBundleLines(input) {
   return input.cart.lines.reduce((matches, line) => {
     const groupId = line.bundleGroupId?.value;
     const itemIndex = parseNumber(line.bundleItemIndex?.value);
+    const offerSize = parseNumber(line.bundleOfferSize?.value);
     const discountType = String(line.bundleDiscountType?.value || "PERCENTAGE");
     const discountValue = parseNumber(line.bundleDiscountValue?.value);
     const offerTitle = String(line.bundleOfferTitle?.value || "Bundle discount");
@@ -124,6 +126,7 @@ function extractStaticBundleLines(input) {
       lineId: line.id,
       groupId,
       offerTitle,
+      offerSize,
       discountType,
       discountValue,
       itemIndex,
@@ -133,6 +136,32 @@ function extractStaticBundleLines(input) {
 
     return matches;
   }, []);
+}
+
+function countCompleteStaticBundleInstances(lines, offerSize) {
+  if (!Number.isFinite(offerSize) || offerSize <= 0) {
+    return 0;
+  }
+
+  const availablePerItem = new Map();
+  for (const line of lines) {
+    availablePerItem.set(
+      line.itemIndex,
+      (availablePerItem.get(line.itemIndex) || 0) + line.quantity,
+    );
+  }
+
+  let bundleInstances = Number.MAX_SAFE_INTEGER;
+  for (let itemIndex = 1; itemIndex <= offerSize; itemIndex += 1) {
+    const available = availablePerItem.get(itemIndex) || 0;
+    bundleInstances = Math.min(bundleInstances, available);
+  }
+
+  if (!Number.isFinite(bundleInstances) || bundleInstances <= 0) {
+    return 0;
+  }
+
+  return bundleInstances;
 }
 
 /**
@@ -292,6 +321,7 @@ export function cartLinesDiscountsGenerateRun(input) {
   for (const line of staticCartLines) {
     const group = staticGroups.get(line.groupId) || {
       offerTitle: line.offerTitle,
+      offerSize: line.offerSize,
       discountType: line.discountType,
       discountValue: line.discountValue,
       lines: [],
@@ -301,11 +331,29 @@ export function cartLinesDiscountsGenerateRun(input) {
   }
 
   for (const group of staticGroups.values()) {
-    const eligibleLines = group.lines.map((line) => ({
-      line,
-      eligibleQuantity: line.quantity,
-      subtotal: line.unitPrice * line.quantity,
-    }));
+    const bundleInstances = countCompleteStaticBundleInstances(group.lines, group.offerSize);
+    if (bundleInstances <= 0) continue;
+
+    const remainingPerItem = new Map();
+    for (let itemIndex = 1; itemIndex <= group.offerSize; itemIndex += 1) {
+      remainingPerItem.set(itemIndex, bundleInstances);
+    }
+
+    const eligibleLines = group.lines.reduce((lines, line) => {
+      const remaining = remainingPerItem.get(line.itemIndex) || 0;
+      const eligibleQuantity = Math.min(remaining, line.quantity);
+
+      if (eligibleQuantity > 0) {
+        remainingPerItem.set(line.itemIndex, remaining - eligibleQuantity);
+        lines.push({
+          line,
+          eligibleQuantity,
+          subtotal: line.unitPrice * eligibleQuantity,
+        });
+      }
+
+      return lines;
+    }, []);
 
     if (eligibleLines.length === 0) continue;
 
@@ -336,8 +384,8 @@ export function cartLinesDiscountsGenerateRun(input) {
 
     const totalDiscount =
       discountType === "FIXED_PRICE"
-        ? Math.max(eligibleSubtotal - discountValue, 0)
-        : Math.min(discountValue, eligibleSubtotal);
+        ? Math.max(eligibleSubtotal - discountValue * bundleInstances, 0)
+        : Math.min(discountValue * bundleInstances, eligibleSubtotal);
 
     if (totalDiscount <= 0) continue;
 

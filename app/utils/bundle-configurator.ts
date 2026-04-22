@@ -1,8 +1,9 @@
 export type BundleItemDraft = {
-  label: string;
   productHandle: string;
   allowVariantSelection: boolean;
   showVariantThumbnails: boolean;
+  variantId: string;
+  variantTitle: string;
 };
 
 export type BundleOfferDraft = {
@@ -12,8 +13,26 @@ export type BundleOfferDraft = {
   discountValue: number;
 };
 
+export type ProductSnapshotVariantDraft = {
+  id: string;
+  title: string;
+  price: string;
+  featuredImage: string | null;
+  availableForSale: boolean;
+};
+
+export type ProductSnapshotDraft = {
+  id: string;
+  handle: string;
+  title: string;
+  featuredImage: string | null;
+  variants: ProductSnapshotVariantDraft[];
+};
+
 export type BundleAppearanceDraft = {
   designPreset: string;
+  timerPreset: string;
+  effectsPreset: string;
   primaryColor: string;
   textColor: string;
   eyebrow: string;
@@ -26,6 +45,8 @@ export type BundleAppearanceDraft = {
   cardGap: number;
   cardPadding: number;
   offerRadius: number;
+  bestSellerBadgePreset: string;
+  bestSellerPngBadgePreset: string;
   bestSellerBadgeColor: string;
   bestSellerBadgeText: string;
   saveBadgeColor: string;
@@ -47,23 +68,47 @@ export type BundleDraftPayload = {
   items: BundleItemDraft[];
   offers: BundleOfferDraft[];
   appearance: BundleAppearanceDraft;
+  productSnapshots: Record<string, ProductSnapshotDraft | null>;
 };
 
 export const MAX_ITEMS = 10;
 
+export function getCrossSellOfferTitle(index: number) {
+  return `Offer ${index + 1}`;
+}
+
+export function getCrossSellOfferSubtitle(index: number) {
+  if (index === 0) return "Current product only";
+
+  return `Current product + ${index} more item${index > 1 ? "s" : ""}`;
+}
+
+export function getCrossSellOfferCompositionLabel(index: number) {
+  if (index === 0) return "Current product only";
+
+  return `${index + 1} bundled items`;
+}
+
+export function getCrossSellItemLabel(index: number) {
+  if (index === 0) return "Anchored product";
+
+  return `Added product ${index}`;
+}
+
 export function createDefaultItem(index: number): BundleItemDraft {
   return {
-    label: `Article ${index + 1}`,
     productHandle: "",
     allowVariantSelection: true,
     showVariantThumbnails: false,
+    variantId: "",
+    variantTitle: "",
   };
 }
 
 export function createDefaultOffer(index: number): BundleOfferDraft {
   return {
-    title: index === 0 ? "Offer 1" : `Offer ${index + 1}`,
-    subtitle: index === 0 ? "Base offer" : `Save more on ${index + 1} articles`,
+    title: getCrossSellOfferTitle(index),
+    subtitle: getCrossSellOfferSubtitle(index),
     discountType: "PERCENTAGE",
     discountValue: index === 0 ? 0 : index === 1 ? 10 : 15,
   };
@@ -72,6 +117,8 @@ export function createDefaultOffer(index: number): BundleOfferDraft {
 export function createDefaultAppearance(): BundleAppearanceDraft {
   return {
     designPreset: "soft",
+    timerPreset: "soft",
+    effectsPreset: "none",
     primaryColor: "#8db28a",
     textColor: "#1a2118",
     eyebrow: "Bundle and save",
@@ -84,6 +131,8 @@ export function createDefaultAppearance(): BundleAppearanceDraft {
     cardGap: 12,
     cardPadding: 18,
     offerRadius: 24,
+    bestSellerBadgePreset: "pill",
+    bestSellerPngBadgePreset: "none",
     bestSellerBadgeColor: "#ffffff",
     bestSellerBadgeText: "#1a2118",
     saveBadgeColor: "#f1c500",
@@ -107,6 +156,7 @@ export function createDefaultBundleDraft(): BundleDraftPayload {
     items: ensureLength([], 3, createDefaultItem),
     offers: ensureLength([], 3, createDefaultOffer),
     appearance: createDefaultAppearance(),
+    productSnapshots: {},
   };
 }
 
@@ -132,4 +182,24 @@ export function safeParseJson<T>(value: FormDataEntryValue | null, fallback: T):
   } catch {
     return fallback;
   }
+}
+
+export function normalizeTimerEndValue(value: string | null | undefined) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+
+  // `datetime-local` returns a local wall-clock value without timezone.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(raw)) {
+    const localDate = new Date(raw);
+    if (!Number.isNaN(localDate.getTime())) {
+      return localDate.toISOString();
+    }
+  }
+
+  const parsed = new Date(raw);
+  if (!Number.isNaN(parsed.getTime())) {
+    return parsed.toISOString();
+  }
+
+  return raw;
 }

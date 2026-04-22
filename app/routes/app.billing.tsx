@@ -83,7 +83,7 @@ export default function BillingPage() {
       <div style={styles.layout}>
         <section style={styles.hero}>
           <span style={styles.badge}>Starter plan</span>
-          <h1 style={styles.title}>Activate paid billing before using Cashenza custom-bundle.</h1>
+            <h1 style={styles.title}>Activate paid billing before using Cashenza Bundlify.</h1>
           <p style={styles.text}>
             The live app plan is simple for launch: one Starter subscription at ${price}/30 days.
             This keeps the offer clear while we validate adoption and conversion.
