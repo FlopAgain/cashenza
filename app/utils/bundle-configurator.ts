@@ -9,6 +9,10 @@ export type BundleItemDraft = {
 export type BundleOfferDraft = {
   title: string;
   subtitle: string;
+  quantity: number;
+  itemQuantities: number[];
+  showQuantitySelector: boolean;
+  quantityOptions: string;
   discountType: "PERCENTAGE" | "FIXED_AMOUNT" | "FIXED_PRICE";
   discountValue: number;
 };
@@ -19,6 +23,7 @@ export type ProductSnapshotVariantDraft = {
   price: string;
   featuredImage: string | null;
   availableForSale: boolean;
+  inventoryQuantity: number | null;
 };
 
 export type ProductSnapshotDraft = {
@@ -109,16 +114,51 @@ export function createDefaultOffer(index: number): BundleOfferDraft {
   return {
     title: getCrossSellOfferTitle(index),
     subtitle: getCrossSellOfferSubtitle(index),
+    quantity: index + 1,
+    itemQuantities: Array.from({ length: index + 1 }, () => 1),
+    showQuantitySelector: false,
+    quantityOptions: "",
     discountType: "PERCENTAGE",
     discountValue: index === 0 ? 0 : index === 1 ? 10 : 15,
   };
+}
+
+export function getCrossSellOfferItemCount(
+  offer: Partial<Pick<BundleOfferDraft, "itemQuantities">> | null | undefined,
+  fallbackIndex = 0,
+) {
+  const explicitCount = Array.isArray(offer?.itemQuantities)
+    ? offer.itemQuantities.length
+    : 0;
+  const fallbackCount = Math.max(1, fallbackIndex + 1);
+
+  return Math.max(1, Math.min(MAX_ITEMS, explicitCount || fallbackCount));
+}
+
+export function getMaxCrossSellItemSlots(
+  offers: Array<Partial<Pick<BundleOfferDraft, "itemQuantities">>>,
+) {
+  return Math.max(
+    1,
+    offers.reduce(
+      (max, offer, index) => Math.max(max, getCrossSellOfferItemCount(offer, index)),
+      1,
+    ),
+  );
+}
+
+export function normalizeQuantity(value: number | string | null | undefined, fallback = 1) {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+
+  return Math.max(1, Math.min(99, Math.floor(parsed)));
 }
 
 export function createDefaultAppearance(): BundleAppearanceDraft {
   return {
     designPreset: "soft",
     timerPreset: "soft",
-    effectsPreset: "none",
+    effectsPreset: "fade in",
     primaryColor: "#8db28a",
     textColor: "#1a2118",
     eyebrow: "Bundle and save",

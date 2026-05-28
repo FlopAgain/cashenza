@@ -10,12 +10,13 @@ Cashenza V2 is built around two bundle types:
 The goal is to remove configuration ambiguity:
 
 - Admin configures bundle logic and commerce rules.
-- Theme editor configures presentation only.
+- First setup is admin-first: the merchant selects a product, creates a bundle, and Cashenza creates the Shopify discount plus the storefront placement.
+- Theme editor settings are optional later presentation overrides only, not the installation path.
 
 ## Core Principles
 
 1. Single source of truth for bundle content: the admin.
-2. Theme editor only controls design, copy defaults, colors, spacing, timer style, and badges.
+2. The dashboard owns first bundle creation and automatic product-page placement.
 3. Cart and discount logic must remain Shopify-native and robust.
 4. Every storefront bundle experience must degrade gracefully when product forms, cart drawers, or theme selectors are non-standard.
 
@@ -110,11 +111,40 @@ Offers tab:
 - initial price
 - discounted price
 
-## Theme editor
+## Storefront placement
 
-Theme editor no longer defines bundle composition.
+The theme app extension no longer defines bundle composition and must not create
+bundles or discounts.
 
-It only controls:
+The app proxy used by the storefront is read-only for setup. It can fetch bundle
+configuration, product snapshots, and analytics endpoints, but it must not create
+or update Shopify discounts and must not create bundles in the database.
+
+After the first bundle is created in the admin, Cashenza should place the
+storefront block automatically once on the default product template. The block
+must stay hidden on products without an active Cashenza bundle.
+
+The admin should also provide a placement/repair action for the default product
+template. This action should insert or repair the app block without forcing the
+merchant to open the Shopify theme editor.
+
+The placement/repair action depends on `read_themes` and `write_themes`. Because
+Shopify requires an exemption for direct theme file writes, the admin must expose
+a clear readiness state before promising automatic placement.
+
+Theme writes are guarded by:
+
+- `CASHENZA_ENABLE_THEME_WRITES=true`
+
+Placement updates `templates/product.json` with one global Cashenza mount point.
+The storefront endpoint and widget decide visibility from the current product
+handle and the active bundles in the database.
+
+Important coexistence rule: a product can have one active volume bundle and one
+active cross-sell bundle at the same time. The widget must render both in a
+compact layout while exposing only one coherent add-to-cart / buy-now flow.
+
+Future theme editor overrides may control:
 
 - widget copy defaults
 - design preset
@@ -174,11 +204,11 @@ Phase 1:
 
 - rename current UX to `Volume bundle` and `Cross-sell bundle`
 - keep existing cart/discount engine
-- keep theme editor style-only direction
+- move first setup toward the admin-first product picker and automatic storefront placement
 
 Phase 2:
 
-- move more bundle content definition into admin-only flows
+- move all bundle content definition into admin-only flows
 - reduce legacy theme fallback logic
 
 Phase 3:

@@ -1,6 +1,12 @@
 import prisma from "../db.server";
 import { reconcileBundleAutomaticDiscountState, syncBundleAutomaticDiscount } from "./bundle-discount.server";
+import { loadReusableBundleAppearance } from "./bundle-appearance.server";
 import { loadProductSnapshots } from "./product-snapshots.server";
+import {
+  normalizeBundleDatabaseStatus,
+  resolveBundleOperationalStatus,
+  resolveBundleSyncLabel,
+} from "./bundle-status";
 
 export type VolumeBundleProductCard = {
   id: string;
@@ -32,16 +38,22 @@ export async function loadShopProducts(
     featuredImage: string | null;
     variantsCount: number;
     availableStock: number;
+    status: string;
+    collections: Array<{
+      title: string;
+      handle: string;
+    }>;
   }>
 > {
   const response = await admin.graphql(
     `#graphql
       query DashboardProducts {
-        products(first: 100, query: "status:active") {
+        products(first: 250, sortKey: TITLE) {
           nodes {
             id
             title
             handle
+            status
             featuredImage {
               url
             }
@@ -49,6 +61,12 @@ export async function loadShopProducts(
               count
             }
             totalInventory
+            collections(first: 10) {
+              nodes {
+                title
+                handle
+              }
+            }
           }
         }
       }`,
@@ -61,9 +79,14 @@ export async function loadShopProducts(
     id: product.id,
     title: product.title,
     handle: product.handle,
+    status: String(product.status || "UNKNOWN"),
     featuredImage: product.featuredImage?.url || null,
     variantsCount: Number(product.variantsCount?.count || 0),
     availableStock: Number(product.totalInventory || 0),
+    collections: (product.collections?.nodes || []).map((collection: any) => ({
+      title: String(collection.title || ""),
+      handle: String(collection.handle || ""),
+    })),
   }));
 }
 
@@ -129,9 +152,18 @@ export async function loadVolumeBundleProducts(params: {
           {
             id: bundle.id,
             title: bundle.title,
-            status: reconciled.shopifyDiscountStatus,
+            status: resolveBundleOperationalStatus({
+              bundleStatus: normalizeBundleDatabaseStatus(reconciled.bundleStatus),
+              automaticDiscountId: reconciled.automaticDiscountId,
+              shopifyDiscountStatus: reconciled.shopifyDiscountStatus,
+            }),
+            syncLabel: resolveBundleSyncLabel({
+              automaticDiscountId: reconciled.automaticDiscountId,
+              shopifyDiscountStatus: reconciled.shopifyDiscountStatus,
+            }),
             bundleStatus: reconciled.bundleStatus,
             automaticDiscountId: reconciled.automaticDiscountId,
+            shopifyDiscountStatus: reconciled.shopifyDiscountStatus,
           },
         ] as const;
       }),
@@ -147,7 +179,15 @@ export async function loadVolumeBundleProducts(params: {
           bundle.productHandle,
           {
             id: bundle.id,
-            status: reconciled.bundleStatus,
+            status: resolveBundleOperationalStatus({
+              bundleStatus: normalizeBundleDatabaseStatus(reconciled.bundleStatus),
+              automaticDiscountId: reconciled.automaticDiscountId,
+              shopifyDiscountStatus: reconciled.shopifyDiscountStatus,
+            }),
+            syncLabel: resolveBundleSyncLabel({
+              automaticDiscountId: reconciled.automaticDiscountId,
+              shopifyDiscountStatus: reconciled.shopifyDiscountStatus,
+            }),
             automaticDiscountId: reconciled.automaticDiscountId,
             shopifyDiscountStatus: reconciled.shopifyDiscountStatus,
             offerCount: bundle.offers.length,
@@ -170,12 +210,11 @@ export async function loadVolumeBundleProducts(params: {
       hasActiveCrossSellBundle: crossSellBundleMap.get(product.handle)?.status === "ACTIVE",
       activeCrossSellBundleId: crossSellBundleMap.get(product.handle)?.id || null,
       activeCrossSellBundleTitle: crossSellBundleMap.get(product.handle)?.title || null,
-      activeCrossSellBundleStatus: crossSellBundleMap.get(product.handle)?.status || null,
+      activeCrossSellBundleStatus:
+        crossSellBundleMap.get(product.handle)?.shopifyDiscountStatus || null,
       volumeBundleId: volumeBundleMap.get(product.handle)?.id || null,
       volumeBundleStatus:
-        volumeBundleMap.get(product.handle)?.status === "ACTIVE" &&
-        Boolean(volumeBundleMap.get(product.handle)?.automaticDiscountId) &&
-        volumeBundleMap.get(product.handle)?.shopifyDiscountStatus === "ACTIVE"
+        volumeBundleMap.get(product.handle)?.status === "ACTIVE"
           ? ("ACTIVE" as const)
           : ("INACTIVE" as const),
       volumeBundleOfferCount: volumeBundleMap.get(product.handle)?.offerCount || 0,
@@ -185,11 +224,9 @@ export async function loadVolumeBundleProducts(params: {
         volumeBundleMap.get(product.handle)?.automaticDiscountId || null,
     }))
     .sort((left, right) => {
-      const leftRank = left.volumeBundleStatus === "ACTIVE" ? 0 : 1;
-      const rightRank = right.volumeBundleStatus === "ACTIVE" ? 0 : 1;
+      const leftRank = left.volumeBundleId ? (left.volumeBundleStatus === "ACTIVE" ? 0 : 1) : 2;
+      const rightRank = right.volumeBundleId ? (right.volumeBundleStatus === "ACTIVE" ? 0 : 1) : 2;
       if (leftRank !== rightRank) return leftRank - rightRank;
-
-      if (left.enabled !== right.enabled) return left.enabled ? -1 : 1;
 
       return left.title.localeCompare(right.title, "fr");
     });
@@ -269,27 +306,50 @@ export async function ensureDefaultVolumeBundleForProduct(params: {
   shop: string;
   admin: { graphql: (query: string) => Promise<Response> };
   productHandle: string;
+  reuseExisting?: boolean;
+  status?: "ACTIVE" | "DRAFT";
 }) {
   const productHandle = params.productHandle.trim();
   if (!productHandle) return null;
 
-  const existingBundle = await prisma.bundle.findFirst({
-    where: {
-      shop: params.shop,
-      bundleType: "VOLUME",
-      productHandle,
-    },
-    include: {
-      offers: {
-        orderBy: { sortOrder: "asc" },
-        include: { items: { orderBy: { sortOrder: "asc" } } },
+  if (params.reuseExisting !== false) {
+    const existingBundle = await prisma.bundle.findFirst({
+      where: {
+        shop: params.shop,
+        bundleType: "VOLUME",
+        productHandle,
       },
-    },
-    orderBy: { updatedAt: "desc" },
-  });
+      include: {
+        offers: {
+          orderBy: { sortOrder: "asc" },
+          include: { items: { orderBy: { sortOrder: "asc" } } },
+        },
+      },
+      orderBy: { updatedAt: "desc" },
+    });
 
-  if (existingBundle) {
-    return normalizeVolumeBundleOfferItems(existingBundle.id);
+    if (existingBundle) {
+      const normalizedBundle = await normalizeVolumeBundleOfferItems(existingBundle.id);
+      const bundleForDiscount = normalizedBundle || existingBundle;
+      const automaticDiscountId = await syncBundleAutomaticDiscount(
+        params.admin,
+        bundleForDiscount as any,
+      );
+
+      return prisma.bundle.update({
+        where: { id: existingBundle.id },
+        data: {
+          status: "ACTIVE",
+          automaticDiscountId,
+        } as any,
+        include: {
+          offers: {
+            orderBy: { sortOrder: "asc" },
+            include: { items: { orderBy: { sortOrder: "asc" } } },
+          },
+        },
+      });
+    }
   }
 
   const snapshots = await loadProductSnapshots(params.admin, [productHandle]);
@@ -297,6 +357,10 @@ export async function ensureDefaultVolumeBundleForProduct(params: {
   if (!product) return null;
 
   const selectedVariant = product.variants.find((entry) => entry.availableForSale) || product.variants[0];
+  const appearance = await loadReusableBundleAppearance({
+    shop: params.shop,
+    productHandle,
+  });
 
   const createdBundle = await prisma.$transaction(async (tx) => {
     const bundle = await tx.bundle.create({
@@ -307,37 +371,37 @@ export async function ensureDefaultVolumeBundleForProduct(params: {
         productId: product.id,
         productTitle: product.title,
         productHandle,
-        status: "ACTIVE",
+        status: params.status || "ACTIVE",
         showVariantPicker: true,
         showVariantThumbnails: false,
-        designPreset: "soft",
-        timerPreset: "soft",
-        effectsPreset: "none",
-        primaryColor: "#8db28a",
-        textColor: "#1a2118",
-        heading: "Choose your bundle",
-        subheading: "Pick the offer that fits your customer best.",
-        eyebrow: "Bundle and save",
-        headingSize: 28,
-        subheadingSize: 16,
-        offerTitleSize: 22,
-        offerPriceSize: 24,
-        cardGap: 12,
-        cardPadding: 18,
-        offerRadius: 24,
-        bestSellerBadgePreset: "pill",
-        bestSellerPngBadgePreset: "none",
-        bestSellerBadgeColor: "#ffffff",
-        bestSellerBadgeText: "#1a2118",
-        saveBadgeColor: "#f1c500",
-        saveBadgeText: "#1a2118",
-        saveBadgePrefix: "Save",
-        showTimer: false,
-        timerEnd: null,
-        timerPrefix: "Offer ends in",
-        timerExpiredText: "Offer expired",
-        timerBackgroundColor: "#1a2118",
-        timerTextColor: "#ffffff",
+        designPreset: appearance.designPreset,
+        timerPreset: appearance.timerPreset,
+        effectsPreset: appearance.effectsPreset,
+        primaryColor: appearance.primaryColor,
+        textColor: appearance.textColor,
+        heading: appearance.heading,
+        subheading: appearance.subheading,
+        eyebrow: appearance.eyebrow,
+        headingSize: appearance.headingSize,
+        subheadingSize: appearance.subheadingSize,
+        offerTitleSize: appearance.offerTitleSize,
+        offerPriceSize: appearance.offerPriceSize,
+        cardGap: appearance.cardGap,
+        cardPadding: appearance.cardPadding,
+        offerRadius: appearance.offerRadius,
+        bestSellerBadgePreset: appearance.bestSellerBadgePreset,
+        bestSellerPngBadgePreset: appearance.bestSellerPngBadgePreset,
+        bestSellerBadgeColor: appearance.bestSellerBadgeColor,
+        bestSellerBadgeText: appearance.bestSellerBadgeText,
+        saveBadgeColor: appearance.saveBadgeColor,
+        saveBadgeText: appearance.saveBadgeText,
+        saveBadgePrefix: appearance.saveBadgePrefix,
+        showTimer: appearance.showTimer,
+        timerEnd: appearance.timerEnd || null,
+        timerPrefix: appearance.timerPrefix,
+        timerExpiredText: appearance.timerExpiredText,
+        timerBackgroundColor: appearance.timerBackgroundColor,
+        timerTextColor: appearance.timerTextColor,
       } as any,
     });
 

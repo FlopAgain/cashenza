@@ -20,12 +20,14 @@ type Props = {
   formAction: string;
 };
 
-const TIMER_PRESETS = ["soft", "cards", "outline"];
+const TIMER_PRESETS = ["soft", "cards", "outline", "odometer", "split-flap"];
 
 const TIMER_PRESET_LABELS: Record<string, string> = {
   soft: "Soft",
   cards: "Cards",
   outline: "Outline",
+  odometer: "Odometer",
+  "split-flap": "Split-flap flip clock",
 };
 
 const TIMER_PRESET_DEFAULTS: Record<
@@ -54,6 +56,18 @@ const TIMER_PRESET_DEFAULTS: Record<
     expiredText: "Last chance ended",
     backgroundColor: "#ffffff",
     textColor: "#1f3b24",
+  },
+  odometer: {
+    prefix: "Offer ends in",
+    expiredText: "Offer expired",
+    backgroundColor: "#151b16",
+    textColor: "#f8fff4",
+  },
+  "split-flap": {
+    prefix: "Offer ends in",
+    expiredText: "Offer expired",
+    backgroundColor: "#111111",
+    textColor: "#ffffff",
   },
 };
 
@@ -1064,9 +1078,49 @@ function TimerPreview({
         <span style={{ ...styles.timerPreviewLabel, ...(timerTheme.label || {}) }}>
           {isExpired ? timerTheme.expiredLabel : timerTheme.prefix}
         </span>
-        <span style={{ ...styles.timerPreviewValue, ...(timerTheme.value || {}) }}>{value}</span>
+        <TimerPreviewValue
+          value={value}
+          preset={appearance.timerPreset}
+          style={{ ...styles.timerPreviewValue, ...(timerTheme.value || {}) }}
+        />
       </div>
     </div>
+  );
+}
+
+function TimerPreviewValue({
+  value,
+  preset,
+  style,
+}: {
+  value: string;
+  preset: string;
+  style: CSSProperties;
+}) {
+  const normalizedPreset = String(preset || "");
+  const isDigitPreset = normalizedPreset === "odometer" || normalizedPreset === "split-flap";
+
+  if (!isDigitPreset) {
+    return <span style={style}>{value}</span>;
+  }
+
+  const digitStyle =
+    normalizedPreset === "split-flap" ? styles.timerSplitFlapDigit : styles.timerOdometerDigit;
+
+  return (
+    <span style={{ ...style, ...styles.timerDigitRow }}>
+      {value.split("").map((character, index) =>
+        character === ":" ? (
+          <span key={`${character}-${index}`} style={styles.timerDigitSeparator}>
+            {character}
+          </span>
+        ) : (
+          <span key={`${character}-${index}`} style={digitStyle}>
+            {character}
+          </span>
+        ),
+      )}
+    </span>
   );
 }
 
@@ -1384,6 +1438,46 @@ function getTimerPresetTheme(appearance: BundleAppearanceDraft) {
     };
   }
 
+  if (preset === "odometer") {
+    return {
+      container: {
+        background: appearance.timerBackgroundColor || "#151b16",
+        color: appearance.timerTextColor || "#f8fff4",
+        borderRadius: "18px",
+        boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
+      },
+      label: {
+        color: `color-mix(in srgb, ${appearance.timerTextColor || "#f8fff4"} 78%, transparent)`,
+        letterSpacing: "0.08em",
+      },
+      value: {
+        color: appearance.timerTextColor || "#f8fff4",
+      },
+      prefix: appearance.timerPrefix || "Offer ends in",
+      expiredLabel: appearance.timerExpiredText || "Offer expired",
+    };
+  }
+
+  if (preset === "split-flap") {
+    return {
+      container: {
+        background: appearance.timerBackgroundColor || "#111111",
+        color: appearance.timerTextColor || "#ffffff",
+        borderRadius: "14px",
+        boxShadow: "0 16px 30px rgba(0,0,0,0.22)",
+      },
+      label: {
+        color: `color-mix(in srgb, ${appearance.timerTextColor || "#ffffff"} 72%, transparent)`,
+        letterSpacing: "0.1em",
+      },
+      value: {
+        color: appearance.timerTextColor || "#ffffff",
+      },
+      prefix: appearance.timerPrefix || "Offer ends in",
+      expiredLabel: appearance.timerExpiredText || "Offer expired",
+    };
+  }
+
   return {
     container: {
       background: appearance.timerBackgroundColor,
@@ -1435,7 +1529,7 @@ const styles: Record<string, CSSProperties> = {
   tabButtonActive: {
     background: "#162314",
     color: "#ffffff",
-    borderColor: "#162314",
+    border: "1px solid #162314",
   },
   gridTwo: {
     display: "grid",
@@ -1873,6 +1967,43 @@ const styles: Record<string, CSSProperties> = {
     fontWeight: 800,
     letterSpacing: "0.04em",
     lineHeight: 1,
+  },
+  timerDigitRow: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "3px",
+    whiteSpace: "nowrap",
+  },
+  timerOdometerDigit: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: "21px",
+    height: "30px",
+    borderRadius: "8px",
+    background: "rgba(255,255,255,0.14)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.2), inset 0 -8px 14px rgba(0,0,0,0.2)",
+    fontVariantNumeric: "tabular-nums",
+  },
+  timerSplitFlapDigit: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: "22px",
+    height: "31px",
+    borderRadius: "5px",
+    background: "linear-gradient(180deg, rgba(255,255,255,0.18) 0 49%, rgba(0,0,0,0.2) 50% 100%)",
+    boxShadow: "inset 0 1px 0 rgba(255,255,255,0.22), 0 4px 8px rgba(0,0,0,0.22)",
+    fontVariantNumeric: "tabular-nums",
+  },
+  timerDigitSeparator: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    minWidth: "6px",
+    fontWeight: 900,
+    opacity: 0.82,
   },
   actions: { display: "flex", justifyContent: "flex-start" },
   primaryButton: {

@@ -1,4 +1,5 @@
 import prisma from "../db.server";
+import { reconcileBundleAutomaticDiscountState } from "./bundle-discount.server";
 import { loadVolumeBundleProducts } from "./volume-bundles.server";
 
 export type AnalyticsSnapshot = {
@@ -29,51 +30,29 @@ export async function loadAnalyticsSnapshot(params: {
   });
 
   const [
-    volumeConfigured,
-    volumeActive,
-    volumeDraft,
-    volumeSynced,
+    rawVolumeBundles,
     totalVolumeOffers,
-    activeBundles,
-    draftBundles,
-    archivedBundles,
-    syncedCrossSellBundles,
+    rawCrossSellBundles,
     totalCrossSellOffers,
     volumeBundleSummary,
   ] = await Promise.all([
-    prisma.bundle.count({
+    prisma.bundle.findMany({
       where: { shop: params.shop, bundleType: "VOLUME" },
-    }),
-    prisma.bundle.count({
-      where: { shop: params.shop, bundleType: "VOLUME", status: "ACTIVE" },
-    }),
-    prisma.bundle.count({
-      where: { shop: params.shop, bundleType: "VOLUME", status: "DRAFT" },
-    }),
-    prisma.bundle.count({
-      where: {
-        shop: params.shop,
-        bundleType: "VOLUME",
-        automaticDiscountId: { not: null },
+      select: {
+        id: true,
+        status: true,
+        automaticDiscountId: true,
       },
     }),
     prisma.bundleOffer.count({
       where: { bundle: { shop: params.shop, bundleType: "VOLUME" } },
     }),
-    prisma.bundle.count({
-      where: { shop: params.shop, bundleType: "CROSS_SELL", status: "ACTIVE" },
-    }),
-    prisma.bundle.count({
-      where: { shop: params.shop, bundleType: "CROSS_SELL", status: "DRAFT" },
-    }),
-    prisma.bundle.count({
-      where: { shop: params.shop, bundleType: "CROSS_SELL", status: "ARCHIVED" },
-    }),
-    prisma.bundle.count({
-      where: {
-        shop: params.shop,
-        bundleType: "CROSS_SELL",
-        automaticDiscountId: { not: null },
+    prisma.bundle.findMany({
+      where: { shop: params.shop, bundleType: "CROSS_SELL" },
+      select: {
+        id: true,
+        status: true,
+        automaticDiscountId: true,
       },
     }),
     prisma.bundleOffer.count({
@@ -82,6 +61,38 @@ export async function loadAnalyticsSnapshot(params: {
     volumeBundleSummaryPromise,
   ]);
 
+  const [volumeBundles, crossSellBundles] = await Promise.all([
+    Promise.all(
+      rawVolumeBundles.map((bundle) =>
+        reconcileBundleAutomaticDiscountState(params.admin, bundle),
+      ),
+    ),
+    Promise.all(
+      rawCrossSellBundles.map((bundle) =>
+        reconcileBundleAutomaticDiscountState(params.admin, bundle),
+      ),
+    ),
+  ]);
+
+  const volumeConfigured = volumeBundles.length;
+  const volumeActive = volumeBundles.filter((bundle) => bundle.bundleStatus === "ACTIVE").length;
+  const volumeDraft = volumeBundles.filter((bundle) => bundle.bundleStatus === "DRAFT").length;
+  const volumeSynced = volumeBundles.filter(
+    (bundle) => bundle.automaticDiscountId && bundle.shopifyDiscountStatus !== "MISSING",
+  ).length;
+
+  const activeBundles = crossSellBundles.filter(
+    (bundle) => bundle.bundleStatus === "ACTIVE",
+  ).length;
+  const draftBundles = crossSellBundles.filter(
+    (bundle) => bundle.bundleStatus === "DRAFT",
+  ).length;
+  const archivedBundles = crossSellBundles.filter(
+    (bundle) => bundle.bundleStatus === "ARCHIVED",
+  ).length;
+  const syncedCrossSellBundles = crossSellBundles.filter(
+    (bundle) => bundle.automaticDiscountId && bundle.shopifyDiscountStatus !== "MISSING",
+  ).length;
   const totalCrossSellBundles = activeBundles + draftBundles + archivedBundles;
 
   return {

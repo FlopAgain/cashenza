@@ -1,13 +1,14 @@
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useActionData, useNavigation } from "react-router";
+import { redirect, useActionData, useLoaderData, useNavigation } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
-import type { CSSProperties } from "react";
 
 import { BundleConfiguratorForm } from "../components/bundle-configurator-form";
+import { ConfiguratorSubmissionSpinner } from "../components/configurator-submission-spinner";
 import prisma from "../db.server";
 import { requireStarterPlan } from "../utils/billing.server";
 import {
   deleteBundleAutomaticDiscount,
+  reconcileBundleAutomaticDiscountState,
   syncBundleAutomaticDiscount,
 } from "../utils/bundle-discount.server";
 import {
@@ -16,6 +17,9 @@ import {
   createDefaultItem,
   createDefaultOffer,
   ensureLength,
+  getCrossSellOfferItemCount,
+  getMaxCrossSellItemSlots,
+  normalizeQuantity,
   normalizeTimerEndValue,
   safeParseJson,
   type BundleAppearanceDraft,
@@ -25,6 +29,13 @@ import {
   MAX_ITEMS,
 } from "../utils/bundle-configurator";
 import { deactivateOtherActiveBundlesForProduct } from "../utils/multi-bundle-activation.server";
+import { loadProductSnapshots } from "../utils/product-snapshots.server";
+import { loadReusableBundleAppearance } from "../utils/bundle-appearance.server";
+import {
+  normalizeBundleDatabaseStatus,
+  resolveBundleOperationalStatus,
+} from "../utils/bundle-status";
+import { loadShopProducts } from "../utils/volume-bundles.server";
 
 type ActionData = {
   errors?: string[];
@@ -34,8 +45,61 @@ type ActionData = {
 };
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  await requireStarterPlan(request);
-  return null;
+  const { session, admin } = await requireStarterPlan(request);
+  const url = new URL(request.url);
+  const productHandle = url.searchParams.get("productHandle")?.trim() || "";
+  const initialDraft = createDefaultBundleDraft();
+  initialDraft.status = "ACTIVE";
+  let volumeBundleBaseOffer: { id: string; title: string } | null = null;
+  const productOptions = await loadShopProducts(admin);
+
+  if (productHandle) {
+    const [snapshots, appearance, volumeBundle] = await Promise.all([
+      loadProductSnapshots(admin, [productHandle]),
+      loadReusableBundleAppearance({ shop: session.shop, productHandle }),
+      prisma.bundle.findFirst({
+        where: {
+          shop: session.shop,
+          bundleType: "VOLUME",
+          productHandle,
+        },
+        select: {
+          id: true,
+          title: true,
+          status: true,
+          automaticDiscountId: true,
+        },
+        orderBy: { updatedAt: "desc" },
+      }),
+    ]);
+    if (volumeBundle?.automaticDiscountId) {
+      const volumeBundleStatus = await reconcileBundleAutomaticDiscountState(admin, {
+        id: volumeBundle.id,
+        status: volumeBundle.status,
+        automaticDiscountId: volumeBundle.automaticDiscountId,
+      });
+      volumeBundleBaseOffer =
+        resolveBundleOperationalStatus({
+          bundleStatus: normalizeBundleDatabaseStatus(volumeBundleStatus.bundleStatus),
+          automaticDiscountId: volumeBundleStatus.automaticDiscountId,
+          shopifyDiscountStatus: volumeBundleStatus.shopifyDiscountStatus,
+        }) === "ACTIVE"
+          ? { id: volumeBundle.id, title: volumeBundle.title }
+          : null;
+    }
+    const snapshot = snapshots.get(productHandle) || null;
+    initialDraft.items[0] = {
+      ...initialDraft.items[0],
+      productHandle,
+    };
+    initialDraft.title = snapshot?.title ? `${snapshot.title} bundle` : `${productHandle} bundle`;
+    initialDraft.appearance = appearance;
+    initialDraft.productSnapshots = {
+      [productHandle]: snapshot,
+    };
+  }
+
+  return { initialDraft, volumeBundleBaseOffer, productOptions };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -45,20 +109,21 @@ export const action = async ({ request }: ActionFunctionArgs) => {
   const title = String(formData.get("title") || "").trim();
   const status = String(formData.get("status") || "DRAFT") === "ACTIVE" ? "ACTIVE" : "DRAFT";
   const itemCount = Math.max(1, Math.min(MAX_ITEMS, Number(formData.get("itemCount") || 1)));
-  const bestSellerIndex = Math.max(
-    1,
-    Math.min(itemCount, Number(formData.get("bestSellerIndex") || 1)),
-  );
+  const bestSellerIndexRaw = String(formData.get("bestSellerIndex") || "0").trim();
+  const bestSellerIndex =
+    bestSellerIndexRaw === "0" || bestSellerIndexRaw.toLowerCase() === "none"
+      ? 0
+      : Math.max(1, Math.min(itemCount, Number(bestSellerIndexRaw || 1)));
 
-  const items = ensureLength(
-    safeParseJson<BundleItemDraft[]>(formData.get("itemsJson"), []),
-    itemCount,
-    createDefaultItem,
-  );
   const offers = ensureLength(
     safeParseJson<BundleOfferDraft[]>(formData.get("offersJson"), []),
     itemCount,
     createDefaultOffer,
+  );
+  const items = ensureLength(
+    safeParseJson<BundleItemDraft[]>(formData.get("itemsJson"), []),
+    getMaxCrossSellItemSlots(offers),
+    createDefaultItem,
   );
   const appearance = {
     ...createDefaultAppearance(),
@@ -151,16 +216,25 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     for (let offerIndex = 0; offerIndex < itemCount; offerIndex += 1) {
       const offer = offers[offerIndex];
-      const offerItems = items.slice(0, offerIndex + 1);
+      const offerItemCount = getCrossSellOfferItemCount(offer, offerIndex);
+      const offerItems = items.slice(0, offerItemCount);
+      const offerQuantity = Array.from({ length: offerItemCount }, (_, itemIndex) =>
+        normalizeQuantity(offer.itemQuantities?.[itemIndex], 1),
+      ).reduce((sum, quantity) => sum + quantity, 0);
       const createdOffer = await tx.bundleOffer.create({
         data: {
           bundleId: bundle.id,
           title: offer.title.trim() || `Offer ${offerIndex + 1}`,
           subtitle: offer.subtitle.trim() || null,
-          quantity: offerIndex + 1,
+          quantity: offerQuantity,
+          showQuantitySelector: offerIndex === 0 && Boolean(offer.showQuantitySelector),
+          quantityOptions:
+            offerIndex === 0 && offer.showQuantitySelector
+              ? String(offer.quantityOptions || "").trim()
+              : null,
           discountType: offer.discountType as never,
           discountValue: Number(offer.discountValue || 0),
-          isBestSeller: bestSellerIndex === offerIndex + 1,
+          isBestSeller: bestSellerIndex > 0 && bestSellerIndex === offerIndex + 1,
           sortOrder: offerIndex,
           items: {
             create: offerItems.map((item, itemIndex) => ({
@@ -174,7 +248,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
                 item.allowVariantSelection || !item.variantTitle.trim()
                   ? null
                   : item.variantTitle.trim(),
-              quantity: 1,
+              quantity: normalizeQuantity(offer.itemQuantities?.[itemIndex], 1),
               allowVariantSelection: item.allowVariantSelection,
               showVariantThumbnails: item.showVariantThumbnails,
               sortOrder: itemIndex,
@@ -183,7 +257,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         },
       });
 
-      if (bestSellerIndex === offerIndex + 1) {
+      if (bestSellerIndex > 0 && bestSellerIndex === offerIndex + 1) {
         bestSellerOfferId = createdOffer.id;
       }
     }
@@ -246,16 +320,27 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
   }
 
+  if (!warnings.length) {
+    return redirect(`/app/bundles/${savedBundleId}`);
+  }
+
   return {
     success: true,
     warnings,
-    draft: createDefaultBundleDraft(),
+    draft: {
+      ...createDefaultBundleDraft(),
+      status: "ACTIVE",
+    },
   } satisfies ActionData;
 };
 
 export default function NewCrossSellBundlePage() {
+  const { initialDraft, volumeBundleBaseOffer, productOptions } =
+    useLoaderData<typeof loader>();
   const actionData = useActionData() as ActionData | undefined;
   const navigation = useNavigation();
+  const isSubmitting = navigation.state === "submitting";
+  const showActionFeedback = !isSubmitting;
 
   return (
     <s-page heading="New cross-sell bundle">
@@ -263,11 +348,13 @@ export default function NewCrossSellBundlePage() {
         Back to cross-sell bundles
       </s-button>
 
-      {actionData?.success ? (
+      {isSubmitting ? <ConfiguratorSubmissionSpinner /> : null}
+
+      {showActionFeedback && actionData?.success ? (
         <s-banner tone="success">Cross-sell bundle created successfully.</s-banner>
       ) : null}
 
-      {actionData?.warnings?.length ? (
+      {showActionFeedback && actionData?.warnings?.length ? (
         <s-banner tone="warning">
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {actionData.warnings.map((warning) => (
@@ -277,7 +364,7 @@ export default function NewCrossSellBundlePage() {
         </s-banner>
       ) : null}
 
-      {actionData?.errors?.length ? (
+      {showActionFeedback && actionData?.errors?.length ? (
         <s-banner tone="critical">
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {actionData.errors.map((error) => (
@@ -288,43 +375,17 @@ export default function NewCrossSellBundlePage() {
       ) : null}
 
       <BundleConfiguratorForm
-        draft={actionData?.draft ?? createDefaultBundleDraft()}
+        draft={actionData?.draft ?? initialDraft}
         submitLabel="Save cross-sell bundle"
-        isSubmitting={navigation.state === "submitting"}
+        isSubmitting={isSubmitting}
         formAction="/app/cross-sell-bundles/new"
-        aside={
-          <div style={asideCard}>
-            <h3 style={asideTitle}>How this works</h3>
-            <ul style={asideList}>
-              <li>This builder is for cross-sell bundles anchored to the current product page.</li>
-              <li>Offer 1 starts with the page product, then each next offer includes the first N configured items.</li>
-              <li>Style, timer, and badge settings stay saved with the bundle while cart discount logic remains Shopify-native.</li>
-            </ul>
-          </div>
-        }
+        productOptions={productOptions}
+        volumeBundleBaseOffer={volumeBundleBaseOffer}
+        dirtyResetSignal={actionData?.success ? actionData : undefined}
       />
     </s-page>
   );
 }
-
-const asideCard: CSSProperties = {
-  padding: "20px",
-  border: "1px solid #d8d8d8",
-  borderRadius: "18px",
-  background: "#ffffff",
-};
-
-const asideTitle: CSSProperties = {
-  margin: "0 0 16px",
-  fontSize: "20px",
-};
-
-const asideList: CSSProperties = {
-  margin: 0,
-  paddingLeft: "18px",
-  display: "grid",
-  gap: "8px",
-};
 
 export const headers: HeadersFunction = (headersArgs) => {
   return boundary.headers(headersArgs);

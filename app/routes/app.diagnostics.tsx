@@ -1,22 +1,34 @@
 import type { CSSProperties } from "react";
-import type { HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { useLoaderData } from "react-router";
+import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
+import { Form, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import { requireStarterPlan } from "../utils/billing.server";
 import { loadDiagnosticsSnapshot } from "../utils/diagnostics.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
-  const { session } = await requireStarterPlan(request);
+  const { session, admin } = await requireStarterPlan(request);
   const diagnostics = await loadDiagnosticsSnapshot({
     shop: session.shop,
+    admin,
   });
 
   return { diagnostics };
 };
 
+export const action = async ({ request }: ActionFunctionArgs) => {
+  await requireStarterPlan(request);
+  return null;
+};
+
+function sortDiagnostics<T extends { severity: "healthy" | "warning" | "critical" }>(items: T[]) {
+  const severityRank = { critical: 0, warning: 1, healthy: 2 };
+  return [...items].sort((left, right) => severityRank[left.severity] - severityRank[right.severity]);
+}
+
 export default function DiagnosticsPage() {
   const { diagnostics } = useLoaderData<typeof loader>();
+  const orderedItems = sortDiagnostics(diagnostics.items);
 
   return (
     <s-page heading="Diagnostics">
@@ -30,9 +42,14 @@ export default function DiagnosticsPage() {
           <h1 style={styles.title}>See what needs attention before a bundle issue reaches support.</h1>
           <p style={styles.text}>
             Diagnostics turns bundle health into plain-language checks: sync issues,
-            duplicate active bundles, invalid structures, and legacy fallback reliance.
+            duplicate actives, invalid structures, and storefront widget placement.
           </p>
         </div>
+        <Form method="post">
+          <button type="submit" name="intent" value="rerun" style={styles.primaryAction}>
+            Run diagnostics
+          </button>
+        </Form>
       </section>
 
       <section style={styles.section}>
@@ -47,7 +64,7 @@ export default function DiagnosticsPage() {
       <section style={styles.section}>
         <h2 style={styles.sectionTitle}>Checks</h2>
         <div style={styles.stack}>
-          {diagnostics.items.map((item) => (
+          {orderedItems.map((item) => (
             <article
               key={item.id}
               style={{
@@ -82,6 +99,15 @@ export default function DiagnosticsPage() {
                   <li key={detail}>{detail}</li>
                 ))}
               </ul>
+              <div style={styles.cardFooter}>
+                <Form method="post">
+                  <input type="hidden" name="intent" value="rerun-check" />
+                  <input type="hidden" name="checkId" value={item.id} />
+                  <button type="submit" style={styles.secondaryAction}>
+                    Rerun check
+                  </button>
+                </Form>
+              </div>
             </article>
           ))}
         </div>
@@ -117,6 +143,10 @@ const styles: Record<string, CSSProperties> = {
     background: "linear-gradient(135deg, #172315 0%, #264227 100%)",
     color: "#f4f8f2",
     marginBottom: "20px",
+    display: "flex",
+    justifyContent: "space-between",
+    gap: "18px",
+    alignItems: "start",
   },
   badge: {
     display: "inline-flex",
@@ -139,6 +169,26 @@ const styles: Record<string, CSSProperties> = {
     fontSize: "15px",
     lineHeight: 1.6,
     maxWidth: "68ch",
+  },
+  primaryAction: {
+    minHeight: "44px",
+    padding: "0 18px",
+    borderRadius: "999px",
+    border: "1px solid rgba(255,255,255,0.2)",
+    background: "#ffffff",
+    color: "#172315",
+    fontWeight: 700,
+    cursor: "pointer",
+  },
+  secondaryAction: {
+    minHeight: "38px",
+    padding: "0 14px",
+    borderRadius: "999px",
+    border: "1px solid #ccd5c9",
+    background: "#ffffff",
+    color: "#172315",
+    fontWeight: 600,
+    cursor: "pointer",
   },
   section: {
     display: "grid",
@@ -253,6 +303,10 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gap: "8px",
     color: "#31412f",
+  },
+  cardFooter: {
+    display: "flex",
+    justifyContent: "flex-end",
   },
 };
 

@@ -21,11 +21,17 @@ test("createDefaultBundleDraft builds a 3-offer draft with best seller on offer 
 test("createDefaultOffer applies the expected starter discount ladder", () => {
   assert.deepEqual(createDefaultOffer(0), {
     title: "Offer 1",
-    subtitle: "Base offer",
+    subtitle: "Current product only",
+    quantity: 1,
+    itemQuantities: [1],
+    showQuantitySelector: false,
+    quantityOptions: "",
     discountType: "PERCENTAGE",
     discountValue: 0,
   });
 
+  assert.equal(createDefaultOffer(1).quantity, 2);
+  assert.deepEqual(createDefaultOffer(1).itemQuantities, [1, 1]);
   assert.equal(createDefaultOffer(1).discountValue, 10);
   assert.equal(createDefaultOffer(2).discountValue, 15);
 });

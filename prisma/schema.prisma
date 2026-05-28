@@ -41,6 +41,7 @@ model AppSettings {
   defaultAddToCartLabel String   @default("Add selected bundle")
   defaultSaveBadgeLabel String   @default("Save")
   defaultTimerPrefix    String   @default("Offer ends in")
+  antiFlashGuardEnabled Boolean  @default(true)
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 }
@@ -114,6 +115,8 @@ model BundleOffer {
   title         String
   subtitle      String?
   quantity      Int
+  showQuantitySelector Boolean            @default(false)
+  quantityOptions String?
   discountType  BundleDiscountType @default(PERCENTAGE)
   discountValue Float              @default(0)
   isBestSeller  Boolean            @default(false)

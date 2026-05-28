@@ -1,10 +1,24 @@
 import type { CSSProperties } from "react";
 import type { ActionFunctionArgs, HeadersFunction, LoaderFunctionArgs } from "react-router";
-import { Form, Link, useLoaderData } from "react-router";
+import { Form, Link, redirect, useLoaderData } from "react-router";
 import { boundary } from "@shopify/shopify-app-react-router/server";
 
+import prisma from "../db.server";
 import { requireStarterPlan } from "../utils/billing.server";
-import { loadVolumeBundleProducts } from "../utils/volume-bundles.server";
+import {
+  deleteBundleAutomaticDiscount,
+  reconcileBundleAutomaticDiscountState,
+  syncBundleAutomaticDiscount,
+} from "../utils/bundle-discount.server";
+import {
+  resolveBundleSyncLabel,
+  resolveShopifyDiscountStatusLabel,
+} from "../utils/bundle-status";
+import { deactivateOtherActiveBundlesForProduct } from "../utils/multi-bundle-activation.server";
+import {
+  loadShopProducts,
+  normalizeVolumeBundleOfferItems,
+} from "../utils/volume-bundles.server";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await requireStarterPlan(request);
@@ -12,46 +26,143 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const searchQuery = url.searchParams.get("q")?.trim() || "";
   const requestedPage = Math.max(1, Number(url.searchParams.get("page") || 1));
 
-  const { products, enabledCount, overriddenCount } = await loadVolumeBundleProducts({
-    shop: session.shop,
-    admin,
-  });
-
+  const [products, volumeBundles] = await Promise.all([
+    loadShopProducts(admin),
+    prisma.bundle.findMany({
+      where: { shop: session.shop, bundleType: "VOLUME", productHandle: { not: null } },
+      include: {
+        offers: {
+          orderBy: { sortOrder: "asc" },
+          select: { id: true, title: true, quantity: true, isBestSeller: true, discountType: true, discountValue: true },
+        },
+      },
+      orderBy: [{ productHandle: "asc" }, { updatedAt: "desc" }],
+    }),
+  ]);
+  const bundlesWithStatus = await Promise.all(
+    volumeBundles.map(async (bundle) => ({
+      ...bundle,
+      shopifyDiscountStatus: (await reconcileBundleAutomaticDiscountState(admin, {
+        id: bundle.id,
+        status: bundle.status,
+        automaticDiscountId: bundle.automaticDiscountId,
+      })).shopifyDiscountStatus,
+    })),
+  );
+  const productMap = new Map(products.map((product) => [product.handle, product]));
+  const groups = Array.from(
+    bundlesWithStatus.reduce((map, bundle) => {
+      const handle = bundle.productHandle || "missing-product";
+      const group = map.get(handle) || {
+        product: productMap.get(handle) || {
+          id: handle,
+          title: bundle.productTitle || handle,
+          handle,
+          featuredImage: null,
+          variantsCount: 0,
+          availableStock: 0,
+          status: "UNKNOWN",
+        },
+        bundles: [] as typeof bundlesWithStatus,
+      };
+      group.bundles.push(bundle);
+      map.set(handle, group);
+      return map;
+    }, new Map<string, { product: any; bundles: typeof bundlesWithStatus }>()),
+  ).map(([, group]) => group);
   const normalizedQuery = searchQuery.toLowerCase();
-  const filteredProducts = normalizedQuery
-    ? products.filter((product) =>
-        `${product.title} ${product.handle}`.toLowerCase().includes(normalizedQuery),
+  const filteredGroups = normalizedQuery
+    ? groups.filter((group) =>
+        `${group.product.title} ${group.product.handle} ${group.bundles.map((bundle) => bundle.title).join(" ")}`.toLowerCase().includes(normalizedQuery),
       )
-    : products;
+    : groups;
 
   const perPage = 4;
-  const totalPages = Math.max(1, Math.ceil(filteredProducts.length / perPage));
+  const totalPages = Math.max(1, Math.ceil(filteredGroups.length / perPage));
   const page = Math.min(requestedPage, totalPages);
-  const paginatedProducts = filteredProducts.slice((page - 1) * perPage, page * perPage);
+  const paginatedGroups = filteredGroups.slice((page - 1) * perPage, page * perPage);
 
   return {
-    products: paginatedProducts,
+    groups: paginatedGroups,
     searchQuery,
     pagination: {
       page,
       totalPages,
-      totalItems: filteredProducts.length,
+      totalItems: filteredGroups.length,
       perPage,
     },
     summary: {
-      enabledCount,
-      overriddenCount,
-      totalProducts: products.length,
+      enabledCount: bundlesWithStatus.filter((bundle) => bundle.shopifyDiscountStatus === "ACTIVE").length,
+      totalProducts: groups.length,
     },
   };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  return null;
+  const { session, admin } = await requireStarterPlan(request);
+  const formData = await request.formData();
+  const intent = String(formData.get("intent") || "");
+  if (!["toggle", "activate", "delete"].includes(intent)) return null;
+
+  const bundleId = String(formData.get("bundleId") || "").trim();
+  const bundle = await prisma.bundle.findFirst({
+    where: { id: bundleId, shop: session.shop, bundleType: "VOLUME" },
+    include: {
+      offers: {
+        orderBy: { sortOrder: "asc" },
+        include: { items: { orderBy: { sortOrder: "asc" } } },
+      },
+    },
+  });
+  if (!bundle) throw new Response("Bundle not found", { status: 404 });
+
+  if (intent === "delete") {
+    if (bundle.automaticDiscountId) {
+      await deleteBundleAutomaticDiscount(admin, bundle.automaticDiscountId);
+    }
+    await prisma.bundle.delete({ where: { id: bundle.id } });
+    return redirect("/app/volume-bundles");
+  }
+
+  const nextStatus = intent === "activate" ? "ACTIVE" : bundle.status === "ACTIVE" ? "DRAFT" : "ACTIVE";
+  let deactivatedBundles: Array<{ id: string; automaticDiscountId: string | null }> = [];
+
+  await prisma.$transaction(async (tx) => {
+    if (nextStatus === "ACTIVE" && bundle.productHandle) {
+      deactivatedBundles = await deactivateOtherActiveBundlesForProduct(tx, {
+        shop: session.shop,
+        productHandle: bundle.productHandle,
+        bundleType: "VOLUME",
+        keepBundleId: bundle.id,
+      });
+    }
+
+    await tx.bundle.update({
+      where: { id: bundle.id },
+      data: { status: nextStatus } as any,
+    });
+  });
+
+  for (const deactivatedBundle of deactivatedBundles) {
+    if (deactivatedBundle.automaticDiscountId) {
+      await deleteBundleAutomaticDiscount(admin, deactivatedBundle.automaticDiscountId);
+    }
+  }
+
+  const savedBundle = await normalizeVolumeBundleOfferItems(bundle.id);
+  if (savedBundle) {
+    const automaticDiscountId = await syncBundleAutomaticDiscount(admin, savedBundle as any);
+    await prisma.bundle.update({
+      where: { id: savedBundle.id },
+      data: { automaticDiscountId } as any,
+    });
+  }
+
+  return redirect("/app/volume-bundles");
 };
 
 export default function VolumeBundlesIndexPage() {
-  const { products, searchQuery, pagination, summary } = useLoaderData<typeof loader>();
+  const { groups, searchQuery, pagination, summary } = useLoaderData<typeof loader>();
 
   function buildPageHref(page: number) {
     const params = new URLSearchParams();
@@ -72,14 +183,12 @@ export default function VolumeBundlesIndexPage() {
           <h1 style={styles.title}>Control where the repeated-quantity bundle appears on your product pages.</h1>
           <p style={styles.text}>
             Volume bundles are the default 1x / 2x / 3x / Nx experience for the same
-            product. If a cross-sell bundle is active on the same page, it overrides the
-            volume bundle on the storefront.
+            product.
           </p>
         </div>
         <div style={styles.metricRow}>
           <MetricCard label="Products" value={String(summary.totalProducts)} />
           <MetricCard label="Volume enabled" value={String(summary.enabledCount)} />
-          <MetricCard label="Overridden by cross-sell" value={String(summary.overriddenCount)} />
         </div>
       </section>
 
@@ -88,8 +197,7 @@ export default function VolumeBundlesIndexPage() {
           <div>
             <h2 style={styles.sectionTitle}>Product coverage</h2>
             <p style={styles.sectionText}>
-              Search products, enable or disable the volume bundle, and quickly spot pages
-              where an active cross-sell bundle already takes priority.
+              Search products, manage volume bundles, and quickly spot product stock and discount status.
             </p>
           </div>
         </div>
@@ -112,107 +220,134 @@ export default function VolumeBundlesIndexPage() {
           ) : null}
         </Form>
 
-        {products.length === 0 ? (
+        {groups.length === 0 ? (
           <div style={styles.emptyState}>
             <h3 style={styles.emptyTitle}>
-              {searchQuery ? "No matching products found" : "No active products found"}
+              {searchQuery ? "No matching volume bundles found" : "No volume bundles found"}
             </h3>
             <p style={styles.emptyText}>
               {searchQuery
                 ? "Try another keyword or clear the search."
-                : "Publish at least one product in Shopify to manage volume bundle visibility here."}
+                : "Use Add new bundle from the dashboard or product coverage list to create a volume bundle."}
             </p>
           </div>
         ) : (
           <>
             <div style={styles.grid}>
-              {products.map((product) => (
-                <article key={product.id} style={styles.card}>
+              {groups.map((group) => (
+                <article key={group.product.handle} style={styles.card}>
                   <div style={styles.cardTop}>
                     <div style={styles.identity}>
-                      {product.featuredImage ? (
-                        <img src={product.featuredImage} alt={product.title} style={styles.image} />
+                      {group.product.featuredImage ? (
+                        <img src={group.product.featuredImage} alt={group.product.title} style={styles.image} />
                       ) : (
                         <div style={styles.imagePlaceholder}>No image</div>
                       )}
                       <div>
-                        <h3 style={styles.cardTitle}>{product.title}</h3>
-                        <p style={styles.handle}>Handle: {product.handle}</p>
+                        <h3 style={styles.cardTitle}>{group.product.title}</h3>
+                        <p style={styles.handle}>Handle: {group.product.handle}</p>
                       </div>
                     </div>
-                    <div style={styles.badgeRow}>
-                      {product.hasActiveCrossSellBundle || product.volumeBundleStatus === "ACTIVE" ? (
-                        <StatusPill label="Bundle ON" kind="success" />
-                      ) : (
-                        <StatusPill label="Bundle OFF" kind="warning" />
-                      )}
-                      {product.hasActiveCrossSellBundle || product.volumeBundleStatus === "ACTIVE" ? (
-                        <InlineStat
-                          label="Mode"
-                          value={product.hasCrossSellBundle ? "Cross-sell" : "Volume bundle"}
-                        />
-                      ) : null}
-                    </div>
+                    <StatusPill
+                      label={group.bundles.some((bundle) => bundle.shopifyDiscountStatus === "ACTIVE") ? "Bundle ON" : "Bundle OFF"}
+                      kind={group.bundles.some((bundle) => bundle.shopifyDiscountStatus === "ACTIVE") ? "success" : "warning"}
+                      title={
+                        group.bundles.some((bundle) => bundle.shopifyDiscountStatus === "ACTIVE")
+                          ? "At least one active volume bundle is available for this product."
+                          : "No active volume bundle is currently available for this product."
+                      }
+                    />
                   </div>
 
                   <div style={styles.statsRow}>
-                    <InlineStat label="Variants" value={String(product.variantsCount)} />
-                    {product.hasCrossSellBundle || product.volumeBundleAutomaticDiscountId ? (
-                      <InlineStat
-                        label="Status"
-                        value={
-                          product.hasActiveCrossSellBundle
-                            ? product.activeCrossSellBundleStatus === "ACTIVE"
-                              ? "Active"
-                              : "Inactive"
-                            : product.volumeBundleStatus === "ACTIVE"
-                              ? "Active"
-                              : "Inactive"
-                        }
-                      />
-                    ) : null}
+                    <InlineStat
+                      label="Variants"
+                      value={String(group.product.variantsCount)}
+                      title={`${group.product.variantsCount} Shopify variant${group.product.variantsCount === 1 ? "" : "s"} are available for this product.`}
+                    />
                     <InlineStat
                       label="Stock"
                       value={
-                        product.availableStock > 0
-                          ? `${product.availableStock} available`
+                        group.product.availableStock > 0
+                          ? `${group.product.availableStock} available`
                           : "Out of stock"
                       }
+                      title={
+                        group.product.availableStock > 0
+                          ? `${group.product.availableStock} units are currently available across this product inventory.`
+                          : "This product is currently out of stock."
+                      }
                     />
-                    {product.volumeBundleBestSellerQuantity ? (
-                      <InlineStat
-                        label="Best seller"
-                        value={`${product.volumeBundleBestSellerQuantity} items`}
-                      />
-                    ) : null}
                   </div>
 
-                  <div style={styles.cardActions}>
-                    {product.hasCrossSellBundle && product.activeCrossSellBundleId ? (
-                      <Link
-                        to={`/app/cross-sell-bundles/${product.activeCrossSellBundleId}`}
-                        style={styles.paginationLink}
-                      >
-                        Go to this cross-sell bundle
-                      </Link>
-                      ) : (
-                      <Link
-                        to={`/app/volume-bundles/${product.handle}?returnTo=/app/volume-bundles`}
-                        style={styles.paginationLink}
-                      >
-                        {product.volumeBundleStatus === "ACTIVE"
-                          ? "Edit volume bundle"
-                          : "Configure volume bundle"}
-                      </Link>
-                    )}
-                    {product.volumeBundleStatus === "ACTIVE" && !product.hasCrossSellBundle ? (
-                      <Link
-                        to={`/app/volume-bundles/${product.handle}/style?returnTo=/app/volume-bundles`}
-                        style={styles.paginationLink}
-                      >
-                        Edit style
-                      </Link>
-                    ) : null}
+                  <div style={styles.bundleStack}>
+                    {group.bundles.map((bundle) => (
+                      <div key={bundle.id} style={styles.bundleRow}>
+                        <div>
+                          <div style={styles.statusRow}>
+                            <StatusPill
+                              label={resolveShopifyDiscountStatusLabel(bundle.shopifyDiscountStatus).toUpperCase()}
+                              kind={bundle.shopifyDiscountStatus === "ACTIVE" ? "success" : "warning"}
+                              title={`Shopify automatic discount status: ${resolveShopifyDiscountStatusLabel(bundle.shopifyDiscountStatus)}.`}
+                            />
+                            <StatusPill
+                              label={resolveBundleSyncLabel({
+                                automaticDiscountId: bundle.automaticDiscountId,
+                                shopifyDiscountStatus: bundle.shopifyDiscountStatus,
+                              })}
+                              kind={bundle.automaticDiscountId ? "success" : "warning"}
+                              title={
+                                bundle.automaticDiscountId
+                                  ? "This bundle is linked to a Shopify automatic discount."
+                                  : "This bundle is missing its Shopify automatic discount."
+                              }
+                            />
+                          </div>
+                          <h4 style={styles.bundleTitle}>{bundle.title}</h4>
+                          <div style={styles.statsRow}>
+                            <InlineStat
+                              label="Offers"
+                              value={String(bundle.offers.length)}
+                              title={`${bundle.offers.length} offer${bundle.offers.length === 1 ? "" : "s"} are configured in this volume bundle.`}
+                            />
+                            <InlineStat
+                              label="Best seller"
+                              value={
+                                bundle.offers.find((offer) => offer.id === bundle.bestSellerOfferId || offer.isBestSeller)?.quantity
+                                  ? `${bundle.offers.find((offer) => offer.id === bundle.bestSellerOfferId || offer.isBestSeller)?.quantity} items`
+                                  : "None"
+                              }
+                              title={
+                                bundle.offers.find((offer) => offer.id === bundle.bestSellerOfferId || offer.isBestSeller)?.quantity
+                                  ? `The highlighted best-seller offer contains ${bundle.offers.find((offer) => offer.id === bundle.bestSellerOfferId || offer.isBestSeller)?.quantity} items.`
+                                  : "No best-seller offer is selected for this bundle."
+                              }
+                            />
+                          </div>
+                        </div>
+
+                        <div style={styles.cardActions}>
+                          <Link
+                            to={`/app/bundles/${bundle.id}?returnTo=/app/volume-bundles`}
+                            style={styles.paginationLink}
+                          >
+                            Edit
+                          </Link>
+                          <BundlePostButton
+                            bundleId={bundle.id}
+                            intent={bundle.status === "ACTIVE" ? "toggle" : "activate"}
+                            label={bundle.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                          />
+                          <BundlePostButton
+                            bundleId={bundle.id}
+                            intent="delete"
+                            label="Delete"
+                            danger
+                            confirm="Delete this volume bundle and its Shopify discount?"
+                          />
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </article>
               ))}
@@ -253,9 +388,9 @@ function MetricCard({ label, value }: { label: string; value: string }) {
   );
 }
 
-function InlineStat({ label, value }: { label: string; value: string }) {
+function InlineStat({ label, value, title }: { label: string; value: string; title?: string }) {
   return (
-    <div style={styles.inlineStat}>
+    <div style={styles.inlineStat} title={title || `${label}: ${value}`}>
       <span style={styles.inlineStatLabel}>{label}</span>
       <strong>{value}</strong>
     </div>
@@ -265,9 +400,11 @@ function InlineStat({ label, value }: { label: string; value: string }) {
 function StatusPill({
   label,
   kind = "default",
+  title,
 }: {
   label: string;
   kind?: "default" | "success" | "warning";
+  title?: string;
 }) {
   const style =
     kind === "success"
@@ -276,7 +413,37 @@ function StatusPill({
         ? styles.statusWarning
         : styles.statusDefault;
 
-  return <span style={{ ...styles.statusPill, ...style }}>{label}</span>;
+  return <span style={{ ...styles.statusPill, ...style }} title={title || label}>{label}</span>;
+}
+
+function BundlePostButton({
+  bundleId,
+  intent,
+  label,
+  danger = false,
+  confirm,
+}: {
+  bundleId: string;
+  intent: "toggle" | "activate" | "delete";
+  label: string;
+  danger?: boolean;
+  confirm?: string;
+}) {
+  return (
+    <Form
+      method="post"
+      style={styles.inlineForm}
+      onSubmit={(event) => {
+        if (confirm && !window.confirm(confirm)) event.preventDefault();
+      }}
+    >
+      <input type="hidden" name="intent" value={intent} />
+      <input type="hidden" name="bundleId" value={bundleId} />
+      <button type="submit" style={danger ? styles.dangerAction : styles.secondaryAction}>
+        {label}
+      </button>
+    </Form>
+  );
 }
 
 const styles: Record<string, CSSProperties> = {
@@ -391,6 +558,21 @@ const styles: Record<string, CSSProperties> = {
     fontSize: "13px",
     fontWeight: 700,
     cursor: "pointer",
+    lineHeight: 1,
+    boxSizing: "border-box",
+  },
+  dangerAction: {
+    minHeight: "36px",
+    padding: "0 14px",
+    borderRadius: "999px",
+    border: "1px solid #f29a9a",
+    background: "#fff6f6",
+    color: "#b01818",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer",
+    lineHeight: 1,
+    boxSizing: "border-box",
   },
   clearLink: {
     color: "#445740",
@@ -429,6 +611,8 @@ const styles: Record<string, CSSProperties> = {
     background: "#ffffff",
     display: "grid",
     gap: "14px",
+    alignContent: "start",
+    alignItems: "start",
   },
   cardTop: {
     display: "flex",
@@ -485,6 +669,30 @@ const styles: Record<string, CSSProperties> = {
     flexWrap: "wrap",
     gap: "12px",
   },
+  bundleStack: {
+    display: "grid",
+    gap: "12px",
+  },
+  bundleRow: {
+    display: "grid",
+    gap: "12px",
+    padding: "14px",
+    borderRadius: "18px",
+    background: "#f8faf6",
+    border: "1px solid #e1e8de",
+    alignContent: "start",
+  },
+  statusRow: {
+    display: "flex",
+    gap: "8px",
+    flexWrap: "wrap",
+    marginBottom: "8px",
+  },
+  bundleTitle: {
+    margin: "0 0 8px",
+    color: "#172315",
+    fontSize: "17px",
+  },
   inlineStat: {
     display: "flex",
     alignItems: "center",
@@ -492,6 +700,9 @@ const styles: Record<string, CSSProperties> = {
     padding: "8px 10px",
     borderRadius: "999px",
     background: "#f5f7f2",
+    width: "fit-content",
+    minHeight: "28px",
+    boxSizing: "border-box",
   },
   inlineStatLabel: {
     fontSize: "12px",
@@ -506,8 +717,14 @@ const styles: Record<string, CSSProperties> = {
   cardActions: {
     display: "flex",
     justifyContent: "flex-start",
+    alignItems: "center",
     gap: "10px",
     flexWrap: "wrap",
+  },
+  inlineForm: {
+    margin: 0,
+    display: "inline-flex",
+    alignItems: "center",
   },
   checkbox: {
     display: "flex",
@@ -551,7 +768,7 @@ const styles: Record<string, CSSProperties> = {
   },
   paginationLink: {
     minHeight: "36px",
-    padding: "8px 14px",
+    padding: "0 14px",
     borderRadius: "999px",
     border: "1px solid #ccd5c8",
     background: "#ffffff",
@@ -562,6 +779,8 @@ const styles: Record<string, CSSProperties> = {
     display: "inline-flex",
     alignItems: "center",
     justifyContent: "center",
+    lineHeight: 1,
+    boxSizing: "border-box",
   },
   statusPill: {
     display: "inline-flex",

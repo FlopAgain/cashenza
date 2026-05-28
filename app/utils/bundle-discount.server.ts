@@ -20,6 +20,7 @@ type PersistedBundleForDiscount = {
   title: string;
   status: "DRAFT" | "ACTIVE" | "ARCHIVED";
   automaticDiscountId: string | null;
+  timerEnd?: string | null;
   offers: Array<{
     id: string;
     title: string;
@@ -58,6 +59,7 @@ type AutomaticDiscountNodeResult = {
 };
 
 type DiscountLifecycleStatus = "ACTIVE" | "EXPIRED" | "SCHEDULED" | "MISSING" | "UNKNOWN";
+export type BundleDatabaseStatus = "DRAFT" | "ACTIVE" | "ARCHIVED";
 
 export function bundleDiscountTitle(bundleTitle: string) {
   return `Cashenza cross-sell Bundle - ${bundleTitle}`;
@@ -69,6 +71,19 @@ export function bundleVolumeDiscountTitle(bundleTitle: string) {
     .trim();
 
   return `Cashenza volume Bundle - ${cleanTitle || bundleTitle}`;
+}
+
+function uniqueBundleDiscountTitle(bundle: PersistedBundleForDiscount) {
+  const baseTitle =
+    bundle.bundleType === "CROSS_SELL"
+      ? bundleDiscountTitle(bundle.title)
+      : bundleVolumeDiscountTitle(bundle.title);
+  const suffix = String(bundle.id || "")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(-6)
+    .toUpperCase();
+
+  return suffix ? `${baseTitle} · ${suffix}` : baseTitle;
 }
 
 export function assertNoUserErrors(payload: DiscountMutationResult | undefined, action: string) {
@@ -138,7 +153,10 @@ export function buildDiscountConfig(bundle: PersistedBundleForDiscount) {
 
 function getDiscountStartsAt(bundle: PersistedBundleForDiscount) {
   if (bundle.status === "ACTIVE") {
-    return new Date().toISOString();
+    // Shopify can briefly report a discount as SCHEDULED when startsAt is equal
+    // to the current server time. Backdate active discounts slightly so ACTIVE
+    // means immediately active in Shopify as well as in Cashenza.
+    return new Date(Date.now() - 5 * 60 * 1000).toISOString();
   }
 
   // Shopify automatic discounts derive their status from dates. Use a past
@@ -148,20 +166,21 @@ function getDiscountStartsAt(bundle: PersistedBundleForDiscount) {
 
 function getDiscountEndsAt(bundle: PersistedBundleForDiscount) {
   if (bundle.status === "ACTIVE") {
-    return null;
+    const timerEnd = String(bundle.timerEnd || "").trim();
+    if (!timerEnd) return null;
+
+    const parsed = new Date(timerEnd);
+    if (Number.isNaN(parsed.getTime())) return null;
+
+    return parsed.toISOString();
   }
 
   return new Date("2000-01-02T00:00:00.000Z").toISOString();
 }
 
 function buildAutomaticDiscountInput(bundle: PersistedBundleForDiscount, functionId: string) {
-  const title =
-    bundle.bundleType === "CROSS_SELL"
-      ? bundleDiscountTitle(bundle.title)
-      : bundleVolumeDiscountTitle(bundle.title);
-
   const input: Record<string, unknown> = {
-    title,
+    title: uniqueBundleDiscountTitle(bundle),
     functionId,
     startsAt: getDiscountStartsAt(bundle),
     discountClasses: ["PRODUCT"],
@@ -321,7 +340,14 @@ export async function loadAutomaticDiscountStatus(
     return "MISSING";
   }
 
-  if (status === "ACTIVE" || status === "EXPIRED" || status === "SCHEDULED") {
+  if (status === "SCHEDULED") {
+    // The current app UI only supports active vs expired. Since active discounts
+    // are intentionally backdated on create/update, a scheduled response is
+    // treated as active to avoid demoting a valid bundle because of clock skew.
+    return "ACTIVE";
+  }
+
+  if (status === "ACTIVE" || status === "EXPIRED") {
     return status as DiscountLifecycleStatus;
   }
 
@@ -332,10 +358,12 @@ export async function reconcileBundleAutomaticDiscountState(
   admin: AdminGraphqlClient,
   bundle: {
     id: string;
-    status: "DRAFT" | "ACTIVE" | "ARCHIVED";
+    status: BundleDatabaseStatus;
     automaticDiscountId: string | null;
   },
 ) {
+  const { default: prisma } = await import("../db.server");
+
   if (!bundle.automaticDiscountId) {
     return {
       shopifyDiscountStatus: "MISSING" as DiscountLifecycleStatus,
@@ -411,4 +439,3 @@ export async function syncBundleAutomaticDiscount(
 
   return createAutomaticDiscount(admin, bundle, functionId);
 }
-import prisma from "../db.server";

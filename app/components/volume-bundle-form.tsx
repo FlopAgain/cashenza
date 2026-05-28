@@ -1,13 +1,25 @@
-import { useEffect, useState, type CSSProperties } from "react";
-import { Form } from "react-router";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { Form, useBlocker } from "react-router";
 
 import type { BundleAppearanceDraft, ProductSnapshotDraft } from "../utils/bundle-configurator";
-import { createDefaultAppearance } from "../utils/bundle-configurator";
+import { createDefaultAppearance, normalizeQuantity } from "../utils/bundle-configurator";
+
+const OFFER_DISCLOSURE_CSS = `
+  .cashenza-offer-summary {
+    list-style: none;
+  }
+
+  .cashenza-offer-summary::-webkit-details-marker {
+    display: none;
+  }
+`;
 
 export type VolumeOfferDraft = {
   title: string;
   subtitle: string;
   quantity: number;
+  showQuantitySelector: boolean;
+  quantityOptions: string;
   discountType: "PERCENTAGE" | "FIXED_AMOUNT" | "FIXED_PRICE";
   discountValue: number;
 };
@@ -33,6 +45,7 @@ type Props = {
   isSubmitting: boolean;
   showVisibilityToggle?: boolean;
   showDeleteAction?: boolean;
+  dirtyResetSignal?: unknown;
   aside?: React.ReactNode;
 };
 
@@ -47,6 +60,8 @@ function createDefaultVolumeOffer(index: number): VolumeOfferDraft {
         ? "Standard price"
         : `Buy ${quantity} and save ${quantity === 2 ? 10 : 15}%`,
     quantity,
+    showQuantitySelector: false,
+    quantityOptions: "",
     discountType: "PERCENTAGE",
     discountValue: quantity === 1 ? 0 : quantity === 2 ? 10 : 15,
   };
@@ -59,7 +74,9 @@ function ensureOfferLength(values: VolumeOfferDraft[], targetLength: number) {
   }
   return next.map((offer, index) => ({
     ...offer,
-    quantity: index + 1,
+    quantity: index === 0 ? 1 : normalizeQuantity(offer.quantity, index + 1),
+    showQuantitySelector: Boolean(offer.showQuantitySelector),
+    quantityOptions: String(offer.quantityOptions || ""),
   }));
 }
 
@@ -99,12 +116,50 @@ function getDiscountedTotal(
   };
 }
 
+function createDirtySnapshot({
+  title,
+  status,
+  itemCount,
+  hasBestSeller,
+  bestSellerIndex,
+  allowVariantSelection,
+  showVariantThumbnails,
+  variantId,
+  variantTitle,
+  offers,
+}: {
+  title: string;
+  status: "DRAFT" | "ACTIVE";
+  itemCount: number;
+  hasBestSeller: boolean;
+  bestSellerIndex: number;
+  allowVariantSelection: boolean;
+  showVariantThumbnails: boolean;
+  variantId: string;
+  variantTitle: string;
+  offers: VolumeOfferDraft[];
+}) {
+  return JSON.stringify({
+    title,
+    status,
+    itemCount,
+    hasBestSeller,
+    bestSellerIndex,
+    allowVariantSelection,
+    showVariantThumbnails,
+    variantId,
+    variantTitle,
+    offers,
+  });
+}
+
 export function VolumeBundleForm({
   product,
   draft,
   submitLabel,
   isSubmitting,
   showDeleteAction,
+  dirtyResetSignal,
   aside,
 }: Props) {
   const [title, setTitle] = useState(draft.title);
@@ -119,6 +174,22 @@ export function VolumeBundleForm({
   const [offers, setOffers] = useState<VolumeOfferDraft[]>(
     ensureOfferLength(draft.offers, draft.itemCount),
   );
+  const [expandedOffers, setExpandedOffers] = useState<Record<number, boolean>>({});
+  const dirtySnapshot = createDirtySnapshot({
+    title,
+    status,
+    itemCount,
+    hasBestSeller,
+    bestSellerIndex,
+    allowVariantSelection,
+    showVariantThumbnails,
+    variantId,
+    variantTitle,
+    offers: offers.slice(0, itemCount),
+  });
+  const dirtyBaselineRef = useRef(dirtySnapshot);
+  const allowNavigationRef = useRef(false);
+  const hasUnsavedChanges = dirtySnapshot !== dirtyBaselineRef.current;
 
   useEffect(() => {
     setTitle(draft.title);
@@ -133,16 +204,104 @@ export function VolumeBundleForm({
     setOffers(ensureOfferLength(draft.offers, draft.itemCount));
   }, [draft]);
 
+  useEffect(() => {
+    if (!isSubmitting) return;
+
+    window.requestAnimationFrame(() => {
+      const scrollTarget = document.scrollingElement || document.documentElement;
+      scrollTarget.scrollTo({
+        top: 0,
+        behavior: "smooth",
+      });
+    });
+  }, [isSubmitting]);
+
+  useEffect(() => {
+    if (isSubmitting) return;
+    allowNavigationRef.current = false;
+  }, [isSubmitting]);
+
+  useEffect(() => {
+    dirtyBaselineRef.current = createDirtySnapshot({
+      title: draft.title,
+      status: draft.status,
+      itemCount: draft.itemCount,
+      hasBestSeller: draft.hasBestSeller,
+      bestSellerIndex: draft.bestSellerIndex,
+      allowVariantSelection: draft.allowVariantSelection,
+      showVariantThumbnails: draft.showVariantThumbnails,
+      variantId: draft.variantId,
+      variantTitle: draft.variantTitle,
+      offers: ensureOfferLength(draft.offers, draft.itemCount),
+    });
+    allowNavigationRef.current = false;
+  }, [draft]);
+
+  useEffect(() => {
+    if (!dirtyResetSignal) return;
+    dirtyBaselineRef.current = dirtySnapshot;
+    allowNavigationRef.current = false;
+  }, [dirtyResetSignal, dirtySnapshot]);
+
+  useEffect(() => {
+    if (!hasUnsavedChanges) return undefined;
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      if (allowNavigationRef.current) return;
+      event.preventDefault();
+      event.returnValue = "";
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => window.removeEventListener("beforeunload", handleBeforeUnload);
+  }, [hasUnsavedChanges]);
+
+  const blocker = useBlocker(({ currentLocation, nextLocation }) => {
+    const currentUrl = `${currentLocation.pathname}${currentLocation.search}${currentLocation.hash}`;
+    const nextUrl = `${nextLocation.pathname}${nextLocation.search}${nextLocation.hash}`;
+
+    return hasUnsavedChanges && !allowNavigationRef.current && currentUrl !== nextUrl;
+  });
+
+  useEffect(() => {
+    if (blocker.state !== "blocked") return;
+
+    const shouldLeave = window.confirm(
+      "You have unsaved bundle changes. Leave this page and lose the incomplete configuration?",
+    );
+
+    if (shouldLeave) {
+      allowNavigationRef.current = true;
+      blocker.proceed();
+    } else {
+      blocker.reset();
+    }
+  }, [blocker]);
+
   const currentVariant =
     product.variants.find((entry) => entry.id === variantId) ||
     product.variants.find((entry) => entry.availableForSale) ||
     product.variants[0];
   const unitPrice = parseVariantPrice(product, variantId);
+  const primaryColor = draft.appearance?.primaryColor || "#8db28a";
 
   function updateOffer(index: number, patch: Partial<VolumeOfferDraft>) {
     setOffers((current) =>
       current.map((offer, offerIndex) =>
-        offerIndex === index ? { ...offer, ...patch, quantity: offerIndex + 1 } : offer,
+        offerIndex === index
+          ? {
+              ...offer,
+              ...patch,
+              quantity:
+                offerIndex === 0
+                  ? 1
+                  : normalizeQuantity(patch.quantity ?? offer.quantity, offerIndex + 1),
+              showQuantitySelector: Boolean(
+                patch.showQuantitySelector ?? offer.showQuantitySelector,
+              ),
+              quantityOptions: String(patch.quantityOptions ?? offer.quantityOptions ?? ""),
+            }
+          : offer,
       ),
     );
   }
@@ -155,7 +314,13 @@ export function VolumeBundleForm({
   }
 
   return (
-    <Form method="post">
+    <Form
+      method="post"
+      onSubmit={() => {
+        allowNavigationRef.current = true;
+      }}
+    >
+      <style dangerouslySetInnerHTML={{ __html: OFFER_DISCLOSURE_CSS }} />
       <input type="hidden" name="offersJson" value={JSON.stringify(offers.slice(0, itemCount))} />
       <input type="hidden" name="itemCount" value={itemCount} />
 
@@ -189,7 +354,7 @@ export function VolumeBundleForm({
                   }
                   style={styles.input}
                 >
-                  <option value="DRAFT">Inactive</option>
+                  <option value="DRAFT">Expired (inactive)</option>
                   <option value="ACTIVE">Active</option>
                 </select>
               </label>
@@ -297,14 +462,107 @@ export function VolumeBundleForm({
             <div style={styles.stack}>
               {offers.slice(0, itemCount).map((offer, index) => {
                 const pricing = getDiscountedTotal(unitPrice, offer);
+                const isOfferExpanded = expandedOffers[index] ?? false;
 
                 return (
-                  <div key={index} style={styles.offerCard}>
-                    <div style={styles.offerHeader}>
-                      <h4 style={styles.offerTitle}>Offer {index + 1} · Quantity {offer.quantity}</h4>
+                  <details
+                    key={index}
+                    style={{
+                      ...styles.offerCard,
+                      background: `color-mix(in srgb, ${primaryColor} ${
+                        isOfferExpanded ? 16 : 10
+                      }%, white)`,
+                      border: `1px solid color-mix(in srgb, ${primaryColor} ${
+                        isOfferExpanded ? 34 : 24
+                      }%, white)`,
+                    }}
+                    open={isOfferExpanded}
+                    onToggle={(event) => {
+                      const isOpen = event.currentTarget.open;
+                      setExpandedOffers((current) => ({
+                        ...current,
+                        [index]: isOpen,
+                      }));
+                    }}
+                  >
+                    <summary className="cashenza-offer-summary" style={styles.offerSummary}>
+                      <span style={styles.offerSummaryTitle}>
+                        <span
+                          aria-hidden="true"
+                          style={{
+                            ...styles.offerChevron,
+                            transform: isOfferExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                          }}
+                        >
+                          ›
+                        </span>
+                        <h4 style={styles.offerTitle}>Offer {index + 1}</h4>
+                      </span>
                       {hasBestSeller && bestSellerIndex === index + 1 ? (
                         <span style={styles.bestSellerPill}>Best seller</span>
                       ) : null}
+                    </summary>
+
+                    <div style={styles.offerDisclosureBody}>
+
+                    <div style={styles.quantityPanel}>
+                      {index === 0 ? (
+                        <div style={styles.stack}>
+                          <div style={styles.lockedQuantityBox}>
+                            <span style={styles.metaLabel}>Configured offer quantity</span>
+                            <strong>1 item</strong>
+                            <span style={styles.helperText}>
+                              Offer 1 stays fixed in the configurator. Enable the storefront selector if customers should choose a quantity.
+                            </span>
+                          </div>
+                          <label style={styles.checkboxField}>
+                            <input
+                              type="checkbox"
+                              checked={offer.showQuantitySelector}
+                              onChange={(event) =>
+                                updateOffer(index, {
+                                  showQuantitySelector: event.target.checked,
+                                })
+                              }
+                            />
+                            <span>Show quantity selector on storefront for offer 1</span>
+                          </label>
+                          {offer.showQuantitySelector ? (
+                            <label style={styles.field}>
+                              <span style={styles.label}>Storefront quantity options</span>
+                              <input
+                                value={offer.quantityOptions}
+                                onChange={(event) =>
+                                  updateOffer(index, {
+                                    quantityOptions: event.target.value,
+                                  })
+                                }
+                                placeholder="Leave empty for any quantity, or enter 1,2,3"
+                                style={styles.input}
+                              />
+                              <span style={styles.helperText}>
+                                Empty allows any quantity up to stock. Use comma-separated values to restrict the choices.
+                              </span>
+                            </label>
+                          ) : null}
+                        </div>
+                      ) : (
+                        <label style={styles.field}>
+                          <span style={styles.label}>Product quantity in this offer</span>
+                          <input
+                            type="number"
+                            min={1}
+                            max={99}
+                            value={offer.quantity}
+                            onChange={(event) =>
+                              updateOffer(index, {
+                                quantity: normalizeQuantity(event.target.value, index + 1),
+                              })
+                            }
+                            style={styles.input}
+                          />
+                        </label>
+                      )}
                     </div>
 
                     <div style={styles.gridTwo}>
@@ -381,7 +639,8 @@ export function VolumeBundleForm({
                         <strong style={styles.priceValue}>{formatMoney(pricing.discountedTotal)}</strong>
                       </div>
                     </div>
-                  </div>
+                    </div>
+                  </details>
                 );
               })}
             </div>
@@ -519,7 +778,59 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     gap: "12px",
   },
+  offerSummary: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    cursor: "pointer",
+    listStyle: "none",
+  },
+  offerSummaryTitle: {
+    display: "inline-flex",
+    alignItems: "center",
+    gap: "10px",
+    minWidth: 0,
+  },
+  offerChevron: {
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "22px",
+    height: "22px",
+    borderRadius: "999px",
+    background: "rgba(255, 255, 255, 0.7)",
+    color: "#1d3124",
+    fontSize: "24px",
+    lineHeight: 1,
+    transition: "transform 180ms ease",
+    transformOrigin: "50% 50%",
+  },
+  offerDisclosureBody: {
+    display: "grid",
+    gap: "14px",
+    marginTop: "14px",
+  },
   offerTitle: { margin: 0, fontSize: "16px" },
+  quantityPanel: {
+    padding: "14px",
+    borderRadius: "14px",
+    border: "1px solid #e4e4e4",
+    background: "#ffffff",
+  },
+  lockedQuantityBox: {
+    display: "grid",
+    gap: "6px",
+    padding: "12px",
+    borderRadius: "12px",
+    border: "1px dashed #c7d4bf",
+    background: "#f7faf4",
+  },
+  helperText: {
+    color: "#5f6f5b",
+    fontSize: "12px",
+    lineHeight: 1.4,
+  },
   bestSellerPill: {
     padding: "6px 10px",
     borderRadius: "999px",

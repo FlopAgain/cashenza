@@ -50,7 +50,7 @@ test("assertNoUserErrors throws a readable message", () => {
   );
 });
 
-test("syncBundleAutomaticDiscount deletes inactive discounts and returns null for drafts", async () => {
+test("syncBundleAutomaticDiscount keeps draft bundles as expired Shopify discounts", async () => {
   const calls: string[] = [];
   const admin = {
     async graphql(query: string) {
@@ -67,6 +67,20 @@ test("syncBundleAutomaticDiscount deletes inactive discounts and returns null fo
                   apiType: "DISCOUNT",
                 },
               ],
+            },
+          },
+        });
+      }
+
+      if (query.includes("discountAutomaticAppUpdate")) {
+        return jsonResponse({
+          data: {
+            discountAutomaticAppUpdate: {
+              automaticAppDiscount: {
+                discountId: "gid://shopify/DiscountAutomaticNode/1",
+                title: "Cashenza cross-sell Bundle - Draft bundle",
+              },
+              userErrors: [],
             },
           },
         });
@@ -91,9 +105,9 @@ test("syncBundleAutomaticDiscount deletes inactive discounts and returns null fo
     offers: [],
   });
 
-  assert.equal(result, null);
+  assert.equal(result, "gid://shopify/DiscountAutomaticNode/1");
   assert.equal(calls.length, 2);
-  assert.match(calls[1], /discountAutomaticDelete/);
+  assert.match(calls[1], /discountAutomaticAppUpdate/);
 });
 
 test("syncBundleAutomaticDiscount recreates the discount when update fails", async () => {

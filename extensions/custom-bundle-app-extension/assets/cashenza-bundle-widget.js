@@ -23,6 +23,31 @@
     return String(value).padStart(2, "0");
   }
 
+  function renderTimerValue(timer, value) {
+    const valueNode = timer.querySelector(".bundle-widget__timer-value");
+    if (!valueNode) return;
+
+    const isDigitPreset =
+      timer.classList.contains("bundle-widget__timer--odometer") ||
+      timer.classList.contains("bundle-widget__timer--split-flap");
+
+    valueNode.setAttribute("aria-label", value);
+
+    if (!isDigitPreset) {
+      valueNode.textContent = value;
+      return;
+    }
+
+    valueNode.innerHTML = value
+      .split("")
+      .map((character) =>
+        character === ":"
+          ? `<span class="bundle-widget__timer-separator" aria-hidden="true">:</span>`
+          : `<span class="bundle-widget__timer-digit" aria-hidden="true"><span>${character}</span></span>`,
+      )
+      .join("");
+  }
+
   function renderTimer(timer) {
     const endRaw = timer.dataset.end || "";
     const labelNode = timer.querySelector(".bundle-widget__timer-label");
@@ -37,9 +62,10 @@
     const remaining = end - Date.now();
     if (remaining <= 0) {
       if (labelNode) {
-        labelNode.textContent = timer.dataset.expiredLabel || "Offer expired";
+        labelNode.textContent =
+          timer.dataset.expiredLabel !== undefined ? timer.dataset.expiredLabel : "Offer expired";
       }
-      valueNode.textContent = "00:00:00";
+      renderTimerValue(timer, "00:00:00");
       return;
     }
 
@@ -49,10 +75,11 @@
     const seconds = totalSeconds % 60;
 
     if (labelNode) {
-      labelNode.textContent = timer.dataset.prefix || "Offer ends in";
+      labelNode.textContent =
+        timer.dataset.prefix !== undefined ? timer.dataset.prefix : "Offer ends in";
     }
 
-    valueNode.textContent = `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`;
+    renderTimerValue(timer, `${pad(hours)}:${pad(minutes)}:${pad(seconds)}`);
   }
 
   function escapeHtml(value) {
@@ -75,9 +102,16 @@
     return Math.round(Number(price || 0) * 100);
   }
 
+  function getWidgetRegistry() {
+    if (!window.__cashenzaBundleWidgetRegistry) {
+      window.__cashenzaBundleWidgetRegistry = new Map();
+    }
+
+    return window.__cashenzaBundleWidgetRegistry;
+  }
+
   function initWidget(root) {
     if (!root || root.dataset.bundleWidgetReady === "true") return;
-    root.dataset.bundleWidgetReady = "true";
 
     const configNode = root.querySelector("[data-bundle-config]");
     let config = {};
@@ -97,7 +131,7 @@
     const analyticsUrl = config.analyticsUrl || "";
     const bestSellerPngAssets = config.bestSellerPngAssets || {};
     const themeBadgeAppearance = config.themeBadgeAppearance || {};
-    const themeEffectsPreset = config.themeEffectsPreset || "none";
+    const themeEffectsPreset = config.themeEffectsPreset || "fade in";
     const themeTimerPreset = config.themeTimerPreset || "soft";
     const bundleBridge = window.__cashenzaBundleBridge;
     const dynamicRoot = root.querySelector(".bundle-dynamic-root");
@@ -107,10 +141,69 @@
       root.closest(".product-details") ||
       document.querySelector(".product-information") ||
       document.querySelector(".product-details");
+    const registry = getWidgetRegistry();
+    const isProductContext = Boolean(productHandle);
 
-    function clearLoadingState() {
+    function setBundlePageState(state) {
+      if (state) document.documentElement.dataset.cashenzaBundleState = state;
+    }
+
+    function clearLoadingState(state = "ready") {
+      setBundlePageState(state);
+      document.documentElement.classList.add("cashenza-bundle-ready");
+      document.documentElement.classList.remove("cashenza-bundle-loading");
+      document.body?.classList?.remove("cashenza-bundle-loading");
       loadingContainer?.classList?.remove("cashenza-bundle-loading");
     }
+
+    function getRootTopbar() {
+      return Array.from(root.children).find((child) =>
+        child.classList?.contains("bundle-widget__topbar"),
+      );
+    }
+
+    function setRootTopbarVisible(visible) {
+      const rootTopbar = getRootTopbar();
+      if (!rootTopbar) return;
+
+      rootTopbar.hidden = !visible;
+      rootTopbar.style.display = visible ? "" : "none";
+    }
+
+    function hideWidgetAndStop({ clearLoading = true } = {}) {
+      root.hidden = true;
+      root.dataset.bundleVisibility = "hidden";
+      root.style.display = "none";
+      if (clearLoading) clearLoadingState();
+      root.dataset.bundleWidgetReady = "true";
+    }
+
+    if (!isProductContext) {
+      setBundlePageState("empty");
+      hideWidgetAndStop();
+      return;
+    }
+
+    const existingRoot = registry.get(productHandle);
+    if (existingRoot && existingRoot !== root && existingRoot.isConnected) {
+      hideWidgetAndStop({ clearLoading: false });
+      return;
+    }
+
+    registry.set(productHandle, root);
+    root.dataset.bundleWidgetReady = "true";
+    setBundlePageState("checking");
+
+    window.addEventListener(
+      "pagehide",
+      () => {
+        const currentRoot = registry.get(productHandle);
+        if (currentRoot === root) {
+          registry.delete(productHandle);
+        }
+      },
+      { once: true },
+    );
 
     function getAnalyticsSessionId() {
       try {
@@ -175,9 +268,10 @@
     root.querySelectorAll("[data-bundle-timer]").forEach((timer) => renderTimer(timer));
 
     function startTimers() {
-      const timers = root.querySelectorAll("[data-bundle-timer]");
-      if (!timers.length) return;
+      if (root.dataset.bundleTimersStarted === "true") return;
+      root.dataset.bundleTimersStarted = "true";
       window.setInterval(() => {
+        const timers = root.querySelectorAll("[data-bundle-timer]");
         timers.forEach((timer) => renderTimer(timer));
       }, 1000);
     }
@@ -455,32 +549,32 @@
       const appearance = { ...(bundle?.appearance || {}) };
 
       appearance.bestSellerBadgePreset =
-        appearance.bestSellerBadgePreset || themeBadgeAppearance.bestSellerBadgePreset;
+        appearance.bestSellerBadgePreset ?? themeBadgeAppearance.bestSellerBadgePreset;
       appearance.bestSellerPngBadgePreset =
-        appearance.bestSellerPngBadgePreset || themeBadgeAppearance.bestSellerPngBadgePreset;
+        appearance.bestSellerPngBadgePreset ?? themeBadgeAppearance.bestSellerPngBadgePreset;
       appearance.bestSellerBadgeColor =
-        appearance.bestSellerBadgeColor || themeBadgeAppearance.bestSellerBadgeColor;
+        appearance.bestSellerBadgeColor ?? themeBadgeAppearance.bestSellerBadgeColor;
       appearance.bestSellerBadgeText =
-        appearance.bestSellerBadgeText || themeBadgeAppearance.bestSellerBadgeText;
+        appearance.bestSellerBadgeText ?? themeBadgeAppearance.bestSellerBadgeText;
       appearance.saveBadgeColor =
-        appearance.saveBadgeColor || themeBadgeAppearance.saveBadgeColor;
+        appearance.saveBadgeColor ?? themeBadgeAppearance.saveBadgeColor;
       appearance.saveBadgeText =
-        appearance.saveBadgeText || themeBadgeAppearance.saveBadgeText;
+        appearance.saveBadgeText ?? themeBadgeAppearance.saveBadgeText;
       appearance.saveBadgePrefix =
-        appearance.saveBadgePrefix || themeBadgeAppearance.saveBadgePrefix;
+        appearance.saveBadgePrefix ?? themeBadgeAppearance.saveBadgePrefix;
       appearance.timerPreset = appearance.timerPreset || themeTimerPreset || "soft";
 
       return appearance;
     }
 
     function getTimerPresetTheme(appearance) {
-      const preset = ["soft", "cards", "outline"].includes(String(appearance?.timerPreset || ""))
+      const preset = ["soft", "cards", "outline", "odometer", "split-flap"].includes(String(appearance?.timerPreset || ""))
         ? String(appearance.timerPreset)
         : "soft";
       const timerBg = appearance?.timerBackgroundColor || "#1a2118";
       const timerText = appearance?.timerTextColor || "#ffffff";
-      const timerPrefix = appearance?.timerPrefix || "Offer ends in";
-      const timerExpiredText = appearance?.timerExpiredText || "Offer expired";
+      const timerPrefix = appearance?.timerPrefix ?? "Offer ends in";
+      const timerExpiredText = appearance?.timerExpiredText ?? "Offer expired";
 
       if (preset === "cards") {
         return {
@@ -508,6 +602,32 @@
         };
       }
 
+      if (preset === "odometer") {
+        return {
+          preset,
+          background: timerBg || "#151b16",
+          text: timerText || "#f8fff4",
+          border: "none",
+          labelColor: `color-mix(in srgb, ${timerText || "#f8fff4"} 78%, transparent)`,
+          valueColor: timerText || "#f8fff4",
+          prefix: timerPrefix,
+          expiredLabel: timerExpiredText,
+        };
+      }
+
+      if (preset === "split-flap") {
+        return {
+          preset,
+          background: timerBg || "#111111",
+          text: timerText || "#ffffff",
+          border: "none",
+          labelColor: `color-mix(in srgb, ${timerText || "#ffffff"} 72%, transparent)`,
+          valueColor: timerText || "#ffffff",
+          prefix: timerPrefix,
+          expiredLabel: timerExpiredText,
+        };
+      }
+
       return {
         preset: "soft",
         background: timerBg,
@@ -523,7 +643,11 @@
     function renderBestSellerBadge(appearance, fallbackText) {
       const pngPreset = String(appearance?.bestSellerPngBadgePreset || "none");
       const badgeText = escapeHtml(appearance?.bestSellerText || fallbackText || "Best seller");
-      const pngAsset = bestSellerPngAssets[pngPreset] || "";
+      const pngAsset =
+        bestSellerPngAssets[pngPreset] ||
+        (pngPreset !== "none"
+          ? `/apps/custom-bundles/badge?preset=${encodeURIComponent(pngPreset)}`
+          : "");
 
       if (pngPreset !== "none" && pngAsset) {
         return `<img class="bundle-offer__pill-image bundle-offer__pill-image--${escapeHtml(pngPreset)}" src="${escapeHtml(pngAsset)}" alt="${badgeText}" width="96" height="96" loading="lazy">`;
@@ -535,51 +659,51 @@
 
     function getBestSellerTitleRowClass(appearance, offer) {
       const pngPreset = String(appearance?.bestSellerPngBadgePreset || "none");
-      const hasPngBadge = Boolean(offer?.isBestSeller && pngPreset !== "none" && bestSellerPngAssets[pngPreset]);
+      const hasPngBadge = Boolean(offer?.isBestSeller && pngPreset !== "none");
       return hasPngBadge ? "bundle-offer__title-row bundle-offer__title-row--has-png" : "bundle-offer__title-row";
     }
 
-    function applyBundleAppearance(bundle) {
+    function applyBundleAppearance(bundle, target = root) {
       const appearance = getEffectiveAppearance(bundle);
       const preset = appearance.designPreset || "soft";
 
-      root.className = root.className.replace(/bundle-widget--[a-z0-9_-]+/gi, "").trim();
-      root.classList.add("bundle-widget");
-      root.classList.add(`bundle-widget--${preset}`);
+      target.className = target.className.replace(/bundle-widget--[a-z0-9_-]+/gi, "").trim();
+      target.classList.add("bundle-widget");
+      target.classList.add(`bundle-widget--${preset}`);
 
-      root.style.setProperty("--bundle-accent-base", appearance.primaryColor || "#8db28a");
-      root.style.setProperty("--bundle-text", appearance.textColor || "#1a2118");
-      root.style.setProperty("--bundle-bg", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 20%, white)`);
-      root.style.setProperty("--bundle-bg-selected", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 30%, white)`);
-      root.style.setProperty("--bundle-border", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 22%, white)`);
-      root.style.setProperty("--bundle-input", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 42%, white)`);
-      root.style.setProperty("--bundle-heading-size", `${appearance.headingSize ?? 28}px`);
-      root.style.setProperty("--bundle-subheading-size", `${appearance.subheadingSize ?? 16}px`);
-      root.style.setProperty("--bundle-offer-title-size", `${appearance.offerTitleSize ?? 22}px`);
-      root.style.setProperty("--bundle-offer-price-size", `${appearance.offerPriceSize ?? 24}px`);
-      root.style.setProperty("--bundle-card-gap", `${appearance.cardGap ?? 12}px`);
-      root.style.setProperty("--bundle-card-padding", `${appearance.cardPadding ?? 18}px`);
-      root.style.setProperty("--bundle-card-radius", `${appearance.offerRadius ?? 24}px`);
-      root.style.setProperty("--bundle-bestseller-bg", appearance.bestSellerBadgeColor || "#ffffff");
-      root.style.setProperty("--bundle-bestseller-text", appearance.bestSellerBadgeText || "#1a2118");
-      root.style.setProperty("--bundle-save-bg", appearance.saveBadgeColor || "#f1c500");
-      root.style.setProperty("--bundle-save-text", appearance.saveBadgeText || "#1a2118");
+      target.style.setProperty("--bundle-accent-base", appearance.primaryColor || "#8db28a");
+      target.style.setProperty("--bundle-text", appearance.textColor || "#1a2118");
+      target.style.setProperty("--bundle-bg", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 20%, white)`);
+      target.style.setProperty("--bundle-bg-selected", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 30%, white)`);
+      target.style.setProperty("--bundle-border", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 22%, white)`);
+      target.style.setProperty("--bundle-input", `color-mix(in srgb, ${appearance.primaryColor || "#8db28a"} 42%, white)`);
+      target.style.setProperty("--bundle-heading-size", `${appearance.headingSize ?? 28}px`);
+      target.style.setProperty("--bundle-subheading-size", `${appearance.subheadingSize ?? 16}px`);
+      target.style.setProperty("--bundle-offer-title-size", `${appearance.offerTitleSize ?? 22}px`);
+      target.style.setProperty("--bundle-offer-price-size", `${appearance.offerPriceSize ?? 24}px`);
+      target.style.setProperty("--bundle-card-gap", `${appearance.cardGap ?? 12}px`);
+      target.style.setProperty("--bundle-card-padding", `${appearance.cardPadding ?? 18}px`);
+      target.style.setProperty("--bundle-card-radius", `${appearance.offerRadius ?? 24}px`);
+      target.style.setProperty("--bundle-bestseller-bg", appearance.bestSellerBadgeColor || "#ffffff");
+      target.style.setProperty("--bundle-bestseller-text", appearance.bestSellerBadgeText || "#1a2118");
+      target.style.setProperty("--bundle-save-bg", appearance.saveBadgeColor || "#f1c500");
+      target.style.setProperty("--bundle-save-text", appearance.saveBadgeText || "#1a2118");
 
       const timerTheme = getTimerPresetTheme(appearance);
-      root.style.setProperty("--bundle-timer-bg", timerTheme.background);
-      root.style.setProperty("--bundle-timer-text", timerTheme.text);
-      root.style.setProperty("--bundle-timer-border", timerTheme.border);
-      root.style.setProperty("--bundle-timer-label-color", timerTheme.labelColor);
-      root.style.setProperty("--bundle-timer-value-color", timerTheme.valueColor);
+      target.style.setProperty("--bundle-timer-bg", timerTheme.background);
+      target.style.setProperty("--bundle-timer-text", timerTheme.text);
+      target.style.setProperty("--bundle-timer-border", timerTheme.border);
+      target.style.setProperty("--bundle-timer-label-color", timerTheme.labelColor);
+      target.style.setProperty("--bundle-timer-value-color", timerTheme.valueColor);
 
-      const eyebrowNode = root.querySelector(".bundle-widget__eyebrow");
-      const headingNode = root.querySelector(".bundle-widget__title");
-      const subheadingNode = root.querySelector(".bundle-widget__subheading");
+      const eyebrowNode = target.querySelector(".bundle-widget__eyebrow");
+      const headingNode = target.querySelector(".bundle-widget__title");
+      const subheadingNode = target.querySelector(".bundle-widget__subheading");
       if (eyebrowNode && typeof appearance.eyebrow === "string") eyebrowNode.textContent = appearance.eyebrow;
       if (headingNode && typeof appearance.heading === "string") headingNode.textContent = appearance.heading;
       if (subheadingNode && typeof appearance.subheading === "string") subheadingNode.textContent = appearance.subheading;
 
-      const timerNode = root.querySelector("[data-bundle-timer]");
+      const timerNode = target.querySelector("[data-bundle-timer]");
       if (timerNode) {
         timerNode.className = timerNode.className.replace(/bundle-widget__timer--[a-z0-9_-]+/gi, "").trim();
         timerNode.classList.add("bundle-widget__timer");
@@ -597,6 +721,22 @@
           timerNode.hidden = true;
         }
       }
+    }
+
+    function createDynamicHeaderMarkup() {
+      return `
+        <div class="bundle-widget__topbar">
+          <div class="bundle-widget__header">
+            <p class="bundle-widget__eyebrow"></p>
+            <h2 class="bundle-widget__title"></h2>
+            <p class="bundle-widget__subheading"></p>
+          </div>
+          <div class="bundle-widget__timer" data-bundle-timer hidden>
+            <span class="bundle-widget__timer-label"></span>
+            <span class="bundle-widget__timer-value">--:--:--</span>
+          </div>
+        </div>
+      `;
     }
 
     let revealAnimationStarted = false;
@@ -646,6 +786,7 @@
             variantId: normalizeVariantId(defaultVariant.id),
             title: defaultVariant.title,
             priceCents: parsePriceToCents(defaultVariant.price),
+            image: defaultVariant.featuredImage || item.product?.featuredImage || "",
           };
         });
       });
@@ -653,25 +794,143 @@
       return selections;
     }
 
-      function subtotalForOffer(offer, selections) {
-        return offer.items.reduce(
-          (sum, item) =>
-            sum + Number(selections[item.id]?.priceCents || 0) * Number(item.quantity || 1),
+    function renderDynamicBundle(bundle, mountRoot = dynamicRoot) {
+      if (!mountRoot) return;
+
+      const appearance = getEffectiveAppearance(bundle);
+      applyBundleAppearance(bundle, mountRoot);
+      const selections = buildInitialSelections(bundle);
+      const displayOffers =
+        bundle.hideBaseOffer && bundle.offers.length > 1
+          ? bundle.offers.slice(1)
+          : bundle.offers;
+      let selectedOfferId =
+        displayOffers.some((offer) => offer.id === bundle.bestSellerOfferId)
+          ? bundle.bestSellerOfferId
+          : displayOffers[0]?.id || null;
+      const quantitySelections = {};
+      const unitSelections = {};
+      let hasTrackedDynamicImpression = false;
+
+      function getSelectedOffer() {
+        return displayOffers.find((offer) => offer.id === selectedOfferId) || displayOffers[0] || null;
+      }
+
+      function isQuantitySelectorOffer(offer) {
+        return Boolean(
+          offer?.showQuantitySelector &&
+            bundle.offers[0]?.id === offer.id &&
+            offer.items?.length === 1,
+        );
+      }
+
+      function parseQuantityOptions(offer) {
+        return String(offer?.quantityOptions || "")
+          .split(",")
+          .map((entry) => Number(String(entry).trim()))
+          .filter((entry) => Number.isFinite(entry) && entry >= 1)
+          .map((entry) => Math.floor(entry))
+          .filter((entry, index, list) => list.indexOf(entry) === index);
+      }
+
+      function getVariantInventoryLimit(offer) {
+        const item = offer?.items?.[0];
+        if (!item) return null;
+        const variants = item.product?.variants || [];
+        const selected = selections[item.id];
+        const variant =
+          variants.find((entry) => normalizeVariantId(entry.id) === normalizeVariantId(selected?.variantId)) ||
+          variants.find((entry) => entry.availableForSale) ||
+          variants[0] ||
+          null;
+        const inventory = Number(variant?.inventoryQuantity);
+        return Number.isFinite(inventory) && inventory > 0 ? inventory : null;
+      }
+
+      function getAllowedQuantityOptions(offer) {
+        const options = parseQuantityOptions(offer);
+        const limit = getVariantInventoryLimit(offer);
+        const filtered = limit ? options.filter((quantity) => quantity <= limit) : options;
+        return filtered.length ? filtered : [1];
+      }
+
+      function getSelectedOfferQuantity(offer) {
+        if (!isQuantitySelectorOffer(offer)) return Number(offer?.items?.[0]?.quantity || 1);
+
+        const options = parseQuantityOptions(offer);
+        const limit = getVariantInventoryLimit(offer);
+        const current = Number(quantitySelections[offer.id] || options[0] || 1);
+        const sanitized = Math.max(1, Math.floor(Number.isFinite(current) ? current : 1));
+
+        if (options.length) {
+          const allowed = getAllowedQuantityOptions(offer);
+          return allowed.includes(sanitized) ? sanitized : allowed[0] || 1;
+        }
+
+        return limit ? Math.min(sanitized, limit) : sanitized;
+      }
+
+      function getEffectiveItemQuantity(offer, item, index) {
+        if (index === 0 && isQuantitySelectorOffer(offer)) {
+          return getSelectedOfferQuantity(offer);
+        }
+
+        return Number(item.quantity || 1);
+      }
+
+      function getUnitSelectionKey(item, unitIndex) {
+        return `${item.id}:${unitIndex}`;
+      }
+
+      function getUnitSelection(item, unitIndex) {
+        return unitSelections[getUnitSelectionKey(item, unitIndex)] || selections[item.id] || null;
+      }
+
+      function buildSelectionFromOption(option) {
+        return {
+          variantId: normalizeVariantId(option.value),
+          title: option.textContent || "",
+          priceCents: Number(option.dataset.priceCents || 0),
+          image: option.dataset.variantImage || "",
+        };
+      }
+
+      function getItemSubtotal(offer, item, index) {
+        const quantity = getEffectiveItemQuantity(offer, item, index);
+        const variants = item.product?.variants || [];
+
+        if (item.allowVariantSelection && variants.length) {
+          let subtotal = 0;
+          for (let unitIndex = 0; unitIndex < quantity; unitIndex += 1) {
+            subtotal += Number(getUnitSelection(item, unitIndex)?.priceCents || 0);
+          }
+          return subtotal;
+        }
+
+        return Number(selections[item.id]?.priceCents || 0) * quantity;
+      }
+
+      function getEffectiveOfferQuantity(offer) {
+        return (offer?.items || []).reduce(
+          (sum, item, index) => sum + getEffectiveItemQuantity(offer, item, index),
           0,
         );
       }
 
-    function renderDynamicBundle(bundle) {
-      if (!dynamicRoot) return;
+      function getAnchoredProductQuantity(offer) {
+        if (String(bundle.bundleType || "").toUpperCase() === "VOLUME") {
+          return getEffectiveOfferQuantity(offer);
+        }
 
-      const appearance = getEffectiveAppearance(bundle);
-      applyBundleAppearance(bundle);
-      const selections = buildInitialSelections(bundle);
-      let selectedOfferId = bundle.bestSellerOfferId || bundle.offers[0]?.id || null;
-      let hasTrackedDynamicImpression = false;
+        const anchoredItem = offer?.items?.[0];
+        return anchoredItem ? getEffectiveItemQuantity(offer, anchoredItem, 0) : 0;
+      }
 
-      function getSelectedOffer() {
-        return bundle.offers.find((offer) => offer.id === selectedOfferId) || bundle.offers[0] || null;
+      function subtotalForOffer(offer, selections) {
+        return (offer?.items || []).reduce(
+          (sum, item, index) => sum + getItemSubtotal(offer, item, index),
+          0,
+        );
       }
 
       function getSelectedDynamicAnalyticsPayload() {
@@ -683,7 +942,7 @@
           offerPosition: selectedOffer
             ? bundle.offers.findIndex((offer) => offer.id === selectedOffer.id) + 1
             : null,
-          offerQuantity: Number(selectedOffer?.quantity || 0),
+          offerQuantity: getEffectiveOfferQuantity(selectedOffer),
           metadata: {
             offerTitle: selectedOffer?.title || "Bundle",
           },
@@ -707,13 +966,83 @@
         return subtotal;
       }
 
+      function renderLockedSelectLikeMarkup(label) {
+        const safeLabel = escapeHtml(label || "");
+
+        return `
+          <div class="bundle-locked-select" aria-disabled="true">
+            <span class="bundle-locked-select__marquee">
+              <span class="bundle-locked-select__marquee-text">${safeLabel}</span>
+              <span class="bundle-locked-select__marquee-text" aria-hidden="true">${safeLabel}</span>
+            </span>
+          </div>
+        `;
+      }
+
+      function syncLockedSelectOverflow(targetRoot) {
+        targetRoot.querySelectorAll(".bundle-locked-select").forEach((node) => {
+          const textNode = node.querySelector(".bundle-locked-select__marquee-text:not([aria-hidden='true'])");
+          const textWidth = textNode ? textNode.scrollWidth : 0;
+          const availableWidth = node.clientWidth;
+          node.classList.toggle("is-overflowing", textWidth > availableWidth + 1);
+        });
+      }
+
+      function renderOfferQuantitySelector(offer) {
+        if (!isQuantitySelectorOffer(offer)) return "";
+
+        const options = parseQuantityOptions(offer);
+        const selectedQuantity = getSelectedOfferQuantity(offer);
+        const limit = getVariantInventoryLimit(offer);
+
+        if (options.length) {
+          const allowedOptions = getAllowedQuantityOptions(offer);
+
+          if (allowedOptions.length === 1) {
+            return "";
+          }
+
+          return `
+            <label class="bundle-offer-item__quantity-wrap">
+              <span class="visually-hidden">Quantity</span>
+              <span class="bundle-quantity-label">Quantité :</span>
+              <select class="bundle-quantity-select" data-dynamic-offer-quantity-id="${escapeHtml(offer.id)}">
+                ${allowedOptions.map((quantity) => `
+                  <option value="${quantity}" ${quantity === selectedQuantity ? "selected" : ""}>
+                    Quantity ${quantity}
+                  </option>
+                `).join("")}
+              </select>
+            </label>
+          `;
+        }
+
+        return `
+          <label class="bundle-offer-item__quantity-wrap">
+            <span class="visually-hidden">Quantity</span>
+            <span class="bundle-quantity-label">Quantité :</span>
+            <input
+              class="bundle-quantity-input"
+              data-dynamic-offer-quantity-id="${escapeHtml(offer.id)}"
+              type="number"
+              min="1"
+              ${limit ? `max="${limit}"` : ""}
+              step="1"
+              value="${selectedQuantity}"
+              inputmode="numeric"
+              aria-label="Quantity"
+            >
+          </label>
+        `;
+      }
+
       function publishDynamicBundleState() {
         const selectedOffer = getSelectedOffer();
         bundleBridge?.publish?.(root, {
           visible: root.dataset.bundleVisibility === "visible",
           priceText: selectedOffer ? formatMoney(getOfferFinalCents(selectedOffer)) : "",
           bundleTitle: selectedOffer?.title || "Bundle",
-          itemCount: Number(selectedOffer?.quantity || 0),
+          itemCount: getEffectiveOfferQuantity(selectedOffer),
         });
       }
 
@@ -721,28 +1050,45 @@
         const currentOffer = getSelectedOffer();
         if (!currentOffer) return;
 
-        const items = currentOffer.items
-          .map((item, index) => {
-            const selected = selections[item.id];
-            if (!selected?.variantId) return null;
+        const items = [];
+        currentOffer.items.forEach((item, index) => {
+          const quantity = getEffectiveItemQuantity(currentOffer, item, index);
+          const variants = item.product?.variants || [];
+          const baseProperties = {
+            "_bundle_id": bundle.id,
+            "_bundle_offer_id": currentOffer.id,
+            "_bundle_offer_title": currentOffer.title,
+            "_bundle_item_index": String(index + 1),
+            "_bundle_item_label": item.label || item.product?.title || "",
+          };
 
-            return {
-              id: normalizeVariantId(selected.variantId),
-              quantity: Number(item.quantity || 1),
-              properties: {
-                "_bundle_id": bundle.id,
-                "_bundle_offer_id": currentOffer.id,
-                "_bundle_offer_title": currentOffer.title,
-                "_bundle_item_index": String(index + 1),
-                "_bundle_item_label": item.label || item.product?.title || "",
-              },
-            };
-          })
-          .filter(Boolean);
+          if (item.allowVariantSelection && variants.length) {
+            for (let unitIndex = 0; unitIndex < quantity; unitIndex += 1) {
+              const selected = getUnitSelection(item, unitIndex);
+              if (!selected?.variantId) continue;
+
+              items.push({
+                id: normalizeVariantId(selected.variantId),
+                quantity: 1,
+                properties: baseProperties,
+              });
+            }
+            return;
+          }
+
+          const selected = selections[item.id];
+          if (!selected?.variantId) return;
+
+          items.push({
+            id: normalizeVariantId(selected.variantId),
+            quantity,
+            properties: baseProperties,
+          });
+        });
 
         if (!items.length) return;
 
-        const actionButtons = dynamicRoot.querySelectorAll(".bundle-add-button, .bundle-buy-now-button");
+        const actionButtons = mountRoot.querySelectorAll(".bundle-add-button, .bundle-buy-now-button");
         const labels = Array.from(actionButtons).map((node) => node.textContent || "");
         actionButtons.forEach((button) => {
           button.disabled = true;
@@ -794,6 +1140,191 @@
         }
       }
 
+      function renderItemImageMarkup(item, selection, quantity) {
+        const image = selection?.image || item.product?.featuredImage || "";
+        const hasImage = item.showVariantThumbnails && image;
+
+        return `
+          <div class="bundle-offer-item__thumb-wrap ${hasImage ? "" : "bundle-offer-item__thumb-wrap--chip-only"}">
+            ${hasImage ? `<img class="bundle-offer-item__image" src="${escapeHtml(image)}" alt="${escapeHtml(item.product?.title || item.label || "")}" width="44" height="44" loading="lazy">` : ""}
+            <span class="bundle-offer-item__qty-chip">x${Math.max(1, Number(quantity || 1))}</span>
+          </div>
+        `;
+      }
+
+      function isDefaultVariantTitle(title) {
+        return String(title || "").trim().toLowerCase() === "default title";
+      }
+
+      function hasOnlyDefaultVariant(item) {
+        const variants = item.product?.variants || [];
+        return variants.length <= 1 || variants.every((variant) => isDefaultVariantTitle(variant.title));
+      }
+
+      function getVariantDisplayLabel(item, variant) {
+        const productTitle = item.product?.title || item.label || "Item";
+        if (!variant) return productTitle;
+
+        const variantTitle = isDefaultVariantTitle(variant.title) ? "" : String(variant.title || "").trim();
+        const price = formatMoney(parsePriceToCents(variant.price));
+        const availability = variant.availableForSale ? "" : " | Sold out";
+
+        return `${productTitle}${variantTitle ? ` : ${variantTitle}` : ""} - ${price}${availability}`;
+      }
+
+      function renderVariantSelectMarkup(item, selected, unitIndex = null, disabled = false) {
+        const variants = item.product?.variants || [];
+        const availableVariants = variants.filter((variant) => variant.availableForSale);
+        const selectableVariants = availableVariants.length ? availableVariants : variants;
+        const unitAttribute =
+          unitIndex == null ? "" : ` data-dynamic-item-unit-index="${escapeHtml(String(unitIndex))}"`;
+        const selectedVariant =
+          variants.find((variant) => normalizeVariantId(variant.id) === normalizeVariantId(selected?.variantId)) ||
+          variants.find((variant) => variant.availableForSale) ||
+          variants[0] ||
+          null;
+        const lockedLabel = getVariantDisplayLabel(item, selectedVariant);
+
+        if (disabled || selectableVariants.length <= 1) {
+          return `
+            <div class="bundle-offer-item__select-wrap">
+              ${renderLockedSelectLikeMarkup(lockedLabel)}
+            </div>
+          `;
+        }
+
+        return `
+          <label class="bundle-offer-item__select-wrap">
+            <span class="visually-hidden">${escapeHtml(item.label || item.product?.title || "Item")}</span>
+            <select
+              class="bundle-variant-select"
+              data-dynamic-item-id="${escapeHtml(item.id)}"
+              ${unitAttribute}
+            >
+              ${variants.map((variant) => `
+                <option
+                  value="${escapeHtml(normalizeVariantId(variant.id))}"
+                  data-price-cents="${escapeHtml(String(parsePriceToCents(variant.price)))}"
+                  data-variant-image="${escapeHtml(variant.featuredImage || item.product?.featuredImage || "")}"
+                  ${selected?.variantId === normalizeVariantId(variant.id) ? "selected" : ""}
+                  ${variant.availableForSale ? "" : "disabled"}
+                >
+                  ${escapeHtml(getVariantDisplayLabel(item, variant))}
+                </option>
+              `).join("")}
+            </select>
+          </label>
+        `;
+      }
+
+      function renderOfferItemMarkup(offer, item, itemIndex) {
+        const quantity = getEffectiveItemQuantity(offer, item, itemIndex);
+        const variants = item.product?.variants || [];
+
+        if (item.allowVariantSelection && variants.length) {
+          const quantitySelector = itemIndex === 0 ? renderOfferQuantitySelector(offer) : "";
+          const isVolumeBundle = String(bundle.bundleType || "").toUpperCase() === "VOLUME";
+
+          if (isVolumeBundle) {
+            const imageMarkup = renderItemImageMarkup(item, getUnitSelection(item, 0), quantity);
+            const unitSelects = Array.from({ length: quantity }, (_, unitIndex) => {
+              const selected = getUnitSelection(item, unitIndex);
+
+              return `
+                <div class="bundle-offer-item__variant-select-row">
+                  ${renderVariantSelectMarkup(item, selected, unitIndex)}
+                </div>
+              `;
+            }).join("");
+
+            return `
+              <div class="bundle-offer-item" data-dynamic-item-id="${escapeHtml(item.id)}">
+                ${quantitySelector}
+                <div class="bundle-offer-item__row ${imageMarkup ? "" : "bundle-offer-item__row--no-image"}">
+                  ${imageMarkup}
+                  <div class="bundle-offer-item__variant-stack">
+                    ${unitSelects}
+                  </div>
+                </div>
+              </div>
+            `;
+          }
+
+          if (hasOnlyDefaultVariant(item)) {
+            const selected = getUnitSelection(item, 0);
+            const imageMarkup = renderItemImageMarkup(item, selected, quantity);
+
+            return `
+              <div class="bundle-offer-item" data-dynamic-item-id="${escapeHtml(item.id)}">
+                ${quantitySelector}
+                <div class="bundle-offer-item__row ${imageMarkup ? "" : "bundle-offer-item__row--no-image"}">
+                  ${imageMarkup}
+                  ${renderVariantSelectMarkup(item, selected, null, true)}
+                </div>
+              </div>
+            `;
+          }
+
+          const unitRows = Array.from({ length: quantity }, (_, unitIndex) => {
+            const selected = getUnitSelection(item, unitIndex);
+            const imageMarkup = renderItemImageMarkup(item, selected, 1);
+
+            return `
+              <div class="bundle-offer-item__row ${imageMarkup ? "" : "bundle-offer-item__row--no-image"}">
+                ${imageMarkup}
+                ${renderVariantSelectMarkup(item, selected, unitIndex)}
+              </div>
+            `;
+          }).join("");
+
+          return `
+            <div class="bundle-offer-item" data-dynamic-item-id="${escapeHtml(item.id)}">
+              ${quantitySelector}
+              ${unitRows}
+            </div>
+          `;
+        }
+
+        const selected = selections[item.id];
+        const imageMarkup = renderItemImageMarkup(item, selected, quantity);
+        const fixedSelectorMarkup = variants.length
+          ? renderVariantSelectMarkup(item, selected, null, true)
+          : `<div class="bundle-offer-item__static">${escapeHtml(item.product?.title || item.label || "Item")}</div>`;
+
+        return `
+          <div class="bundle-offer-item" data-dynamic-item-id="${escapeHtml(item.id)}">
+            <div class="bundle-offer-item__row ${imageMarkup ? "" : "bundle-offer-item__row--no-image"}">
+              ${imageMarkup}
+              ${fixedSelectorMarkup}
+              ${itemIndex === 0 ? renderOfferQuantitySelector(offer) : ""}
+            </div>
+          </div>
+        `;
+      }
+
+      function renderVolumeDefaultOfferItemMarkup(offer) {
+        const item = offer?.items?.[0];
+        if (!item) return "";
+
+        const quantity = getEffectiveOfferQuantity(offer);
+        const selected = selections[item.id];
+        const imageMarkup = renderItemImageMarkup(item, selected, quantity);
+        const variants = item.product?.variants || [];
+        const fixedSelectorMarkup = variants.length
+          ? renderVariantSelectMarkup(item, selected, null, true)
+          : `<div class="bundle-offer-item__static">${escapeHtml(item.product?.title || item.label || "Item")}</div>`;
+
+        return `
+          <div class="bundle-offer-item" data-dynamic-item-id="${escapeHtml(item.id)}">
+            <div class="bundle-offer-item__row ${imageMarkup ? "" : "bundle-offer-item__row--no-image"}">
+              ${imageMarkup}
+              ${fixedSelectorMarkup}
+              ${renderOfferQuantitySelector(offer)}
+            </div>
+          </div>
+        `;
+      }
+
       function offerMarkup(offer, index) {
         const subtotal = subtotalForOffer(offer, selections);
         const fixedAmountCents = parsePriceToCents(offer.discountValue);
@@ -808,10 +1339,17 @@
         const isSelected = offer.id === selectedOfferId;
         const savingsCents = Math.max(0, subtotal - finalCents);
         const hasDiscount = savingsCents > 0;
-        const saveLabel =
+        const savePrefix = String(appearance.saveBadgePrefix ?? "Save").trim();
+        const saveValue =
           offer.discountType === "PERCENTAGE"
-            ? `${appearance.saveBadgePrefix || "Save"} ${String(offer.discountValue)}%`
-            : `${appearance.saveBadgePrefix || "Save"} ${formatMoney(savingsCents)}`;
+            ? `${String(offer.discountValue)}%`
+            : formatMoney(savingsCents);
+        const saveLabel = savePrefix ? `${savePrefix} ${saveValue}` : saveValue;
+        const isVolumeDefaultOnly =
+          String(bundle.bundleType || "").toUpperCase() === "VOLUME" &&
+          hasOnlyDefaultVariant(offer.items?.[0] || {});
+        const isCrossSellBundle = String(bundle.bundleType || "").toUpperCase() === "CROSS_SELL";
+        const shouldHideMainQuantityChip = isCrossSellBundle && (offer.items || []).length > 1;
 
         return `
           <div class="bundle-offer ${isSelected ? "is-selected" : ""}" data-dynamic-offer-id="${escapeHtml(offer.id)}" role="button" tabindex="0" aria-pressed="${isSelected ? "true" : "false"}" style="--bundle-offer-index: ${index};">
@@ -819,7 +1357,7 @@
               <div class="bundle-offer__summary-left">
                 <div class="bundle-offer__thumb-wrap">
                   ${offer.items[0]?.product?.featuredImage ? `<img class="bundle-offer__thumb" src="${escapeHtml(offer.items[0].product.featuredImage)}" alt="${escapeHtml(offer.items[0].product.title)}" width="64" height="64" loading="lazy">` : ""}
-                  <span class="bundle-offer__qty-chip">x${offer.quantity}</span>
+                  ${shouldHideMainQuantityChip ? "" : `<span class="bundle-offer__qty-chip">x${getAnchoredProductQuantity(offer)}</span>`}
                 </div>
                 <div>
                   <div class="${getBestSellerTitleRowClass(appearance, offer)}">
@@ -836,66 +1374,40 @@
               </div>
             </div>
             <div class="bundle-offer__details" ${isSelected ? "" : "hidden"}>
-              ${offer.items.map((item) => {
-                const selected = selections[item.id];
-                const variants = item.product?.variants || [];
-                const image = item.product?.featuredImage || "";
-
-                return `
-                  <div class="bundle-offer-item" data-dynamic-item-id="${escapeHtml(item.id)}">
-                    <div class="bundle-offer-item__row">
-                      ${image ? `<img class="bundle-offer-item__image" src="${escapeHtml(image)}" alt="${escapeHtml(item.product?.title || item.label || "")}" width="44" height="44" loading="lazy">` : ""}
-                      ${
-                        item.allowVariantSelection && variants.length
-                          ? `
-                            <label class="bundle-offer-item__select-wrap">
-                              <span class="visually-hidden">${escapeHtml(item.label || item.product?.title || "Item")}</span>
-                              <select class="bundle-variant-select" data-dynamic-item-id="${escapeHtml(item.id)}">
-                                ${variants.map((variant) => `
-                                  <option
-                                    value="${escapeHtml(normalizeVariantId(variant.id))}"
-                                    data-price-cents="${escapeHtml(String(parsePriceToCents(variant.price)))}"
-                                    ${selected?.variantId === normalizeVariantId(variant.id) ? "selected" : ""}
-                                    ${variant.availableForSale ? "" : "disabled"}
-                                  >
-                                    ${escapeHtml(item.product?.title || item.label || "Item")} : ${escapeHtml(variant.title)} - ${escapeHtml(formatMoney(parsePriceToCents(variant.price)))}${variant.availableForSale ? "" : " | Sold out"}
-                                  </option>
-                                `).join("")}
-                              </select>
-                            </label>
-                          `
-                          : `<div class="bundle-offer-item__static">${escapeHtml(item.product?.title || item.label || "Item")}</div>`
-                      }
-                    </div>
-                  </div>
-                `;
-              }).join("")}
+              ${
+                isVolumeDefaultOnly
+                  ? renderVolumeDefaultOfferItemMarkup(offer)
+                  : offer.items.map((item, itemIndex) => renderOfferItemMarkup(offer, item, itemIndex)).join("")
+              }
             </div>
           </div>
         `;
       }
 
       function render() {
-        dynamicRoot.innerHTML = `
+        mountRoot.innerHTML = `
+          ${createDynamicHeaderMarkup()}
           <div class="bundle-offers">
-            ${bundle.offers.map((offer, index) => offerMarkup(offer, index)).join("")}
+            ${displayOffers.map((offer, index) => offerMarkup(offer, index)).join("")}
           </div>
           ${createActionButtonsMarkup("dynamic")}
         `;
+        applyBundleAppearance(bundle, mountRoot);
 
-        dynamicRoot.querySelectorAll("[data-dynamic-offer-id]").forEach((node) => {
+        mountRoot.querySelectorAll("[data-dynamic-offer-id]").forEach((node) => {
           const offerId = node.getAttribute("data-dynamic-offer-id");
 
           node.addEventListener("click", (event) => {
             if (!event.target.closest(".bundle-variant-select")) {
               selectedOfferId = offerId;
+              const selectedOffer = bundle.offers.find((offer) => offer.id === offerId);
               trackAnalyticsEvent({
                 bundleType: bundle.bundleType || "CROSS_SELL",
                 eventType: "OFFER_SELECTED",
                 bundleId: bundle.id,
                 offerId,
                 offerPosition: bundle.offers.findIndex((offer) => offer.id === offerId) + 1,
-                offerQuantity: bundle.offers.find((offer) => offer.id === offerId)?.quantity || null,
+                offerQuantity: selectedOffer ? getEffectiveOfferQuantity(selectedOffer) : null,
               });
               render();
             }
@@ -905,37 +1417,73 @@
             if (event.key === "Enter" || event.key === " ") {
               event.preventDefault();
               selectedOfferId = offerId;
+              const selectedOffer = bundle.offers.find((offer) => offer.id === offerId);
               trackAnalyticsEvent({
                 bundleType: bundle.bundleType || "CROSS_SELL",
                 eventType: "OFFER_SELECTED",
                 bundleId: bundle.id,
                 offerId,
                 offerPosition: bundle.offers.findIndex((offer) => offer.id === offerId) + 1,
-                offerQuantity: bundle.offers.find((offer) => offer.id === offerId)?.quantity || null,
+                offerQuantity: selectedOffer ? getEffectiveOfferQuantity(selectedOffer) : null,
               });
               render();
             }
           });
         });
 
-        dynamicRoot.querySelectorAll("[data-dynamic-item-id].bundle-variant-select").forEach((select) => {
+        mountRoot.querySelectorAll("[data-dynamic-item-id].bundle-variant-select").forEach((select) => {
+          select.addEventListener("click", (event) => {
+            event.stopPropagation();
+          });
+
           select.addEventListener("change", (event) => {
             const itemId = event.target.getAttribute("data-dynamic-item-id");
+            const unitIndexRaw = event.target.getAttribute("data-dynamic-item-unit-index");
             const option = event.target.selectedOptions[0];
             if (!itemId || !option) return;
 
-            selections[itemId] = {
-              variantId: normalizeVariantId(option.value),
-              title: option.textContent || "",
-              priceCents: Number(option.dataset.priceCents || 0),
-            };
+            const nextSelection = buildSelectionFromOption(option);
+
+            if (unitIndexRaw != null) {
+              unitSelections[`${itemId}:${Number(unitIndexRaw)}`] = nextSelection;
+            } else {
+              selections[itemId] = nextSelection;
+            }
 
             render();
           });
         });
 
-        dynamicRoot.querySelector("[data-dynamic-add-button]")?.addEventListener("click", () => addSelectedDynamicBundle());
-        dynamicRoot.querySelector("[data-dynamic-buy-button]")?.addEventListener("click", () => addSelectedDynamicBundle({ checkout: true }));
+        mountRoot.querySelectorAll("[data-dynamic-offer-quantity-id]").forEach((input) => {
+          input.addEventListener("click", (event) => {
+            event.stopPropagation();
+          });
+
+          input.addEventListener("change", (event) => {
+            const offerId = event.target.getAttribute("data-dynamic-offer-quantity-id");
+            if (!offerId) return;
+
+            const offer = bundle.offers.find((entry) => entry.id === offerId);
+            if (!offer) return;
+
+            quantitySelections[offerId] = getSelectedOfferQuantity({
+              ...offer,
+              id: offerId,
+              quantityOptions: offer.quantityOptions,
+            });
+            const rawQuantity = Number(event.target.value || 1);
+            quantitySelections[offerId] = Math.max(
+              1,
+              Math.floor(Number.isFinite(rawQuantity) ? rawQuantity : 1),
+            );
+            render();
+          });
+        });
+
+        mountRoot.querySelector("[data-dynamic-add-button]")?.addEventListener("click", () => addSelectedDynamicBundle());
+        mountRoot.querySelector("[data-dynamic-buy-button]")?.addEventListener("click", () => addSelectedDynamicBundle({ checkout: true }));
+        syncLockedSelectOverflow(mountRoot);
+        window.requestAnimationFrame?.(() => syncLockedSelectOverflow(mountRoot));
         publishDynamicBundleState();
         if (!hasTrackedDynamicImpression) {
           hasTrackedDynamicImpression = true;
@@ -964,13 +1512,14 @@
       if (!proxyUrl || !dynamicRoot) {
         wireStaticBundle();
         startRevealAnimation(3, themeEffectsPreset);
-        clearLoadingState();
+        clearLoadingState("active");
         return;
       }
 
       root.hidden = true;
       root.dataset.bundleVisibility = "hidden";
       root.style.display = "none";
+      setRootTopbarVisible(true);
 
       fetch(proxyUrl, {
         credentials: "same-origin",
@@ -981,28 +1530,44 @@
           return response.json();
         })
         .then((payload) => {
-          const bundle = payload?.bundles?.[0];
-          if (!bundle?.offers?.length) {
+          const bundles = Array.isArray(payload?.bundles)
+            ? payload.bundles.filter((bundle) => bundle?.offers?.length)
+            : [];
+
+          if (!bundles.length) {
             root.hidden = true;
             root.dataset.bundleVisibility = "hidden";
             root.style.display = "none";
             dynamicRoot.hidden = true;
             if (staticRoot) staticRoot.hidden = true;
-            clearLoadingState();
+            setRootTopbarVisible(true);
+            clearLoadingState("empty");
             return;
           }
 
+          setBundlePageState("active");
           root.hidden = false;
           root.dataset.bundleVisibility = "visible";
           root.style.display = "";
           dynamicRoot.hidden = false;
           if (staticRoot) staticRoot.hidden = true;
+          setRootTopbarVisible(false);
+          dynamicRoot.innerHTML = bundles
+            .map(
+              (bundle, index) => `
+                <div class="bundle-dynamic-instance" data-dynamic-bundle-index="${index}" data-dynamic-bundle-id="${escapeHtml(bundle.id)}"></div>
+              `,
+            )
+            .join("");
           startRevealAnimation(
-            bundle.offers.length || 3,
-            bundle?.appearance?.effectsPreset || themeEffectsPreset || "none",
+            bundles.reduce((sum, bundle) => sum + Number(bundle.offers?.length || 0), 0) || 3,
+            bundles[0]?.appearance?.effectsPreset || themeEffectsPreset || "fade in",
           );
-          renderDynamicBundle(bundle);
-          clearLoadingState();
+          bundles.forEach((bundle, index) => {
+            const mountRoot = dynamicRoot.querySelector(`[data-dynamic-bundle-index="${index}"]`);
+            renderDynamicBundle(bundle, mountRoot);
+          });
+          clearLoadingState("active");
         })
         .catch((error) => {
           console.error("Dynamic bundle fallback kept:", error);
@@ -1010,7 +1575,7 @@
           root.dataset.bundleVisibility = "hidden";
           root.style.display = "none";
           bundleBridge?.publish?.(root, { visible: false, priceText: "" });
-          clearLoadingState();
+          clearLoadingState("error");
         });
     }
 

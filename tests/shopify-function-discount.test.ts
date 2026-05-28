@@ -70,6 +70,76 @@ test("shopify function applies percentage discount to a configured admin bundle"
   assert.equal(candidates[0].targets.length, 2);
 });
 
+test("shopify function respects configured per-item quantities", () => {
+  const result = cartLinesDiscountsGenerateRun({
+    discount: {
+      discountClasses: ["PRODUCT"],
+      metafield: {
+        value: JSON.stringify({
+          bundleId: "bundle-quantity",
+          offers: [
+            {
+              id: "offer-quantity",
+              title: "Quantity offer",
+              quantity: 3,
+              discountType: "PERCENTAGE",
+              discountValue: 20,
+              items: [
+                { itemIndex: 1, quantity: 2 },
+                { itemIndex: 2, quantity: 1 },
+              ],
+            },
+          ],
+        }),
+        jsonValue: {
+          bundleId: "bundle-quantity",
+          offers: [
+            {
+              id: "offer-quantity",
+              title: "Quantity offer",
+              quantity: 3,
+              discountType: "PERCENTAGE",
+              discountValue: 20,
+              items: [
+                { itemIndex: 1, quantity: 2 },
+                { itemIndex: 2, quantity: 1 },
+              ],
+            },
+          ],
+        },
+      },
+    },
+    cart: {
+      lines: [
+        {
+          id: "line-1",
+          quantity: 2,
+          cost: { amountPerQuantity: { amount: "30.00" }, subtotalAmount: { amount: "60.00" } },
+          bundleId: { value: "bundle-quantity" },
+          bundleOfferId: { value: "offer-quantity" },
+          bundleItemIndex: { value: "1" },
+        },
+        {
+          id: "line-2",
+          quantity: 1,
+          cost: { amountPerQuantity: { amount: "40.00" }, subtotalAmount: { amount: "40.00" } },
+          bundleId: { value: "bundle-quantity" },
+          bundleOfferId: { value: "offer-quantity" },
+          bundleItemIndex: { value: "2" },
+        },
+      ],
+    },
+  } as any);
+
+  const candidates = (result.operations[0] as any).productDiscountsAdd.candidates;
+  assert.equal(candidates.length, 1);
+  assert.equal(candidates[0].value.percentage.value, 20);
+  assert.deepEqual(
+    candidates[0].targets.map((target: any) => target.cartLine.quantity),
+    [2, 1],
+  );
+});
+
 test("shopify function preserves static fixed-price bundles across multiple lines", () => {
   const result = cartLinesDiscountsGenerateRun({
     discount: {

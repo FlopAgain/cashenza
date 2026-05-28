@@ -2,7 +2,6 @@ import type { LoaderFunctionArgs } from "react-router";
 
 import prisma from "../db.server";
 import { authenticate } from "../shopify.server";
-import { syncBundleAutomaticDiscount } from "../utils/bundle-discount.server";
 import type { ProductSnapshotDraft } from "../utils/bundle-configurator";
 import { loadProductSnapshots } from "../utils/product-snapshots.server";
 import { normalizeVolumeBundleOfferItems } from "../utils/volume-bundles.server";
@@ -11,7 +10,6 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   try {
     const url = new URL(request.url);
     const productHandle = url.searchParams.get("product_handle")?.trim() || "";
-    const limit = Math.max(1, Math.min(20, Number(url.searchParams.get("limit") || 10)));
     let session:
       | Awaited<ReturnType<typeof authenticate.public.appProxy>>["session"]
       | null = null;
@@ -53,7 +51,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           },
         },
       },
-      take: limit,
+      take: 1,
     });
 
     const volumeBundle = productHandle
@@ -77,54 +75,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           },
         })
       : null;
-
-    const simpleBundleSetting = productHandle
-      ? await prisma.simpleBundleProductSetting.findUnique({
-          where: {
-            shop_productHandle: {
-              shop,
-              productHandle,
-            },
-        },
-        select: { enabled: true },
-      })
-      : null;
     let resolvedVolumeBundle = volumeBundle;
     if (resolvedVolumeBundle?.bundleType === "VOLUME") {
       resolvedVolumeBundle = await normalizeVolumeBundleOfferItems(resolvedVolumeBundle.id);
     }
 
-    const finalSelectedBundles =
-      crossSellBundles.length > 0
-        ? crossSellBundles
-        : simpleBundleSetting?.enabled === false
-          ? []
-          : resolvedVolumeBundle
-            ? [resolvedVolumeBundle]
-            : [];
-
-    if (admin) {
-      for (const bundle of finalSelectedBundles as any[]) {
-        if (bundle.status !== "ACTIVE") continue;
-
-        try {
-          const automaticDiscountId = await syncBundleAutomaticDiscount(admin, bundle);
-          if (automaticDiscountId !== bundle.automaticDiscountId) {
-            bundle.automaticDiscountId = automaticDiscountId;
-            await prisma.bundle.update({
-              where: { id: bundle.id },
-              data: { automaticDiscountId } as any,
-            });
-          }
-        } catch (error) {
-          authError =
-            authError ||
-            (error instanceof Error
-              ? `Automatic discount sync failed: ${error.message}`
-              : "Automatic discount sync failed");
-        }
-      }
-    }
+    const finalSelectedBundles = [
+      ...(resolvedVolumeBundle ? [resolvedVolumeBundle] : []),
+      ...crossSellBundles,
+    ];
 
     let snapshots = new Map<string, ProductSnapshotDraft | null>();
     if (admin) {
@@ -146,12 +105,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       ok: true,
       shop: shop || null,
       productHandle: productHandle || null,
-      simpleBundleEnabled: simpleBundleSetting?.enabled ?? true,
+      simpleBundleEnabled: true,
       productSnapshotsLoaded: Boolean(admin),
       authError,
-      bundles: finalSelectedBundles.map((bundle) => ({
+      bundles: finalSelectedBundles.map((bundle, bundleIndex) => ({
         id: bundle.id,
         bundleType: bundle.bundleType,
+        hideBaseOffer: finalSelectedBundles.length > 1 && bundleIndex > 0,
         title: bundle.title,
         productHandle: bundle.productHandle,
         bestSellerOfferId: bundle.bestSellerOfferId,
@@ -160,7 +120,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         appearance: {
           designPreset: bundle.designPreset,
           timerPreset: (bundle as any).timerPreset || "soft",
-          effectsPreset: (bundle as any).effectsPreset || "none",
+          effectsPreset: (bundle as any).effectsPreset || "fade in",
           primaryColor: bundle.primaryColor,
           textColor: bundle.textColor,
           eyebrow: bundle.eyebrow,
@@ -192,6 +152,8 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           title: offer.title,
           subtitle: offer.subtitle,
           quantity: offer.quantity,
+          showQuantitySelector: Boolean((offer as any).showQuantitySelector),
+          quantityOptions: (offer as any).quantityOptions || "",
           discountType: offer.discountType,
           discountValue: offer.discountValue,
           isBestSeller: offer.isBestSeller,

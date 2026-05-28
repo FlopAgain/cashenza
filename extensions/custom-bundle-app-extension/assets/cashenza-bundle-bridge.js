@@ -226,62 +226,14 @@
 
   function syncStickyContainers(activeEntry) {
     getStickyContainers().forEach((container) => {
-      const buttons = Array.from(
-        container.querySelectorAll("button, input[type='submit'], input[type='button'], .button"),
-      ).filter((node) => !node.closest("[data-bundle-ignore-sticky]"));
-
-      const priceNodes = Array.from(
-        container.querySelectorAll("[class*='price'], .price, [data-price], [data-product-price]"),
-      ).filter((node) => !node.closest("button"));
-
       if (!activeEntry || !activeEntry.state?.visible) {
         container.removeAttribute("data-cashenza-bundle-active");
-
-        buttons.forEach((button) => {
-          if (button.tagName === "INPUT") {
-            const originalValue = restoreText(button, "value");
-            if (originalValue != null) button.value = originalValue;
-            const originalType = restoreText(button, "type");
-            if (originalType != null) button.setAttribute("type", originalType);
-          } else {
-            const originalText = restoreText(button, "text");
-            if (originalText != null) button.textContent = originalText;
-            const originalType = restoreText(button, "type");
-            if (originalType === null) {
-              button.removeAttribute("type");
-            } else if (originalType != null) {
-              button.setAttribute("type", originalType);
-            }
-          }
-        });
-
-        priceNodes.forEach((node) => {
-          const originalText = restoreText(node, "text");
-          if (originalText != null) node.textContent = originalText;
-        });
         return;
       }
 
+      // Do not rewrite sticky button text or price nodes: Shopify web components
+      // keep required refs inside those nodes and will throw if their children are replaced.
       container.setAttribute("data-cashenza-bundle-active", "true");
-
-        buttons.forEach((button) => {
-          if (button.tagName === "INPUT") {
-            rememberText(button, "value", button.value);
-            rememberText(button, "type", button.getAttribute("type"));
-            button.value = "Add to cart";
-            button.setAttribute("type", "button");
-          } else {
-            rememberText(button, "text", button.textContent || "");
-            rememberText(button, "type", button.getAttribute("type"));
-            button.textContent = "Add to cart";
-            button.setAttribute("type", "button");
-          }
-        });
-
-      priceNodes.slice(0, 3).forEach((node) => {
-        rememberText(node, "text", node.textContent || "");
-        node.textContent = activeEntry.state.priceText || "";
-      });
     });
   }
 

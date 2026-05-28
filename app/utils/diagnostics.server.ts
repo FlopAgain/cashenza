@@ -1,4 +1,6 @@
 import prisma from "../db.server";
+import { loadBundleStatusSnapshot } from "./bundle-status.server";
+import { loadShopProducts } from "./volume-bundles.server";
 
 export type DiagnosticSeverity = "healthy" | "warning" | "critical";
 
@@ -10,8 +12,92 @@ export type DiagnosticItem = {
   details: string[];
 };
 
-export async function loadDiagnosticsSnapshot(params: { shop: string }) {
-  const [settings, activeCrossSellBundles, volumeBundles, simpleSettings, duplicateGroups] =
+type AdminGraphqlClient = {
+  graphql: (
+    query: string,
+    options?: {
+      variables?: Record<string, unknown>;
+    },
+  ) => Promise<Response>;
+};
+
+type LiveWidgetIssue = {
+  kind: "outside-product-page" | "duplicate-product-page";
+  pagePath: string;
+  blockId: string;
+};
+
+async function fetchStorefrontHtml(shop: string, path: string) {
+  const response = await fetch(`https://${shop}${path}`, {
+    headers: {
+      Accept: "text/html",
+      "User-Agent": "Cashenza-Bundlify-Diagnostics",
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`Storefront request failed for ${path}: ${response.status}`);
+  }
+
+  return response.text();
+}
+
+function extractWidgetBlockIds(html: string) {
+  const matches = html.matchAll(/id="bundle-widget-([^"]+)"/g);
+  return Array.from(matches, (match) => match[1]).filter(Boolean);
+}
+
+async function loadLiveWidgetPlacementIssues(params: {
+  shop: string;
+  admin: AdminGraphqlClient;
+  productHandles: string[];
+}) {
+  const staticPaths = ["/", "/collections/all", "/cart"];
+  const productPaths = params.productHandles.map((handle) => `/products/${handle}`);
+  const issues: LiveWidgetIssue[] = [];
+
+  for (const path of staticPaths) {
+    try {
+      const html = await fetchStorefrontHtml(params.shop, path);
+      const blockIds = extractWidgetBlockIds(html);
+      blockIds.forEach((blockId) => {
+        issues.push({
+          kind: "outside-product-page",
+          pagePath: path,
+          blockId,
+        });
+      });
+    } catch {
+      // Best effort: diagnostics should stay usable even if a storefront fetch fails.
+    }
+  }
+
+  for (const path of productPaths) {
+    try {
+      const html = await fetchStorefrontHtml(params.shop, path);
+      const blockIds = extractWidgetBlockIds(html);
+      if (blockIds.length > 1) {
+        blockIds.forEach((blockId) => {
+          issues.push({
+            kind: "duplicate-product-page",
+            pagePath: path,
+            blockId,
+          });
+        });
+      }
+    } catch {
+      // Best effort
+    }
+  }
+
+  return issues;
+}
+
+export async function loadDiagnosticsSnapshot(params: {
+  shop: string;
+  admin: AdminGraphqlClient;
+}) {
+  const [settings, crossSellBundles, volumeBundles, duplicateGroups, products] =
     await Promise.all([
       prisma.appSettings.findUnique({
         where: { shop: params.shop },
@@ -23,11 +109,11 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
         where: {
           shop: params.shop,
           bundleType: "CROSS_SELL",
-          status: "ACTIVE",
         },
         select: {
           id: true,
           title: true,
+          status: true,
           productHandle: true,
           automaticDiscountId: true,
           offers: {
@@ -50,12 +136,13 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
         select: {
           id: true,
           title: true,
-          productHandle: true,
           status: true,
+          productHandle: true,
           automaticDiscountId: true,
           offers: {
             select: {
               id: true,
+              quantity: true,
               items: {
                 select: {
                   id: true,
@@ -64,15 +151,6 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
               },
             },
           },
-        },
-      }),
-      prisma.simpleBundleProductSetting.findMany({
-        where: {
-          shop: params.shop,
-          enabled: true,
-        },
-        select: {
-          productHandle: true,
         },
       }),
       prisma.bundle.groupBy({
@@ -87,37 +165,72 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
           _all: true,
         },
       }),
+      loadShopProducts(params.admin),
     ]);
+
+  const [crossSellStatuses, volumeStatuses] = await Promise.all([
+    Promise.all(
+      crossSellBundles.map(async (bundle) => ({
+        bundle,
+        status: await loadBundleStatusSnapshot(params.admin, bundle),
+      })),
+    ),
+    Promise.all(
+      volumeBundles.map(async (bundle) => ({
+        bundle,
+        status: await loadBundleStatusSnapshot(params.admin, bundle),
+      })),
+    ),
+  ]);
+
+  const activeCrossSellHandles = crossSellStatuses
+    .filter((entry) => entry.status.operationalStatus === "ACTIVE" && entry.bundle.productHandle)
+    .map((entry) => entry.bundle.productHandle as string);
+  const activeVolumeHandles = volumeStatuses
+    .filter((entry) => entry.status.operationalStatus === "ACTIVE" && entry.bundle.productHandle)
+    .map((entry) => entry.bundle.productHandle as string);
+  const sampleHandles = [
+    ...new Set(
+      [...activeCrossSellHandles, ...activeVolumeHandles, ...products.slice(0, 20).map((product) => product.handle)]
+        .filter(Boolean),
+    ),
+  ];
+
+  const liveWidgetIssues = await loadLiveWidgetPlacementIssues({
+    shop: params.shop,
+    admin: params.admin,
+    productHandles: sampleHandles,
+  });
 
   const duplicateHandles = duplicateGroups.filter(
     (group) => group.productHandle && group._count._all > 1,
   );
-  const unsyncedCrossSell = activeCrossSellBundles.filter((bundle) => !bundle.automaticDiscountId);
-  const invalidCrossSell = activeCrossSellBundles.filter(
-    (bundle) =>
-      !bundle.productHandle ||
-      bundle.offers.length === 0 ||
-      bundle.offers.some((offer) => offer.items.length === 0),
+  const missingCrossSellDiscounts = crossSellStatuses.filter(
+    (entry) =>
+      entry.status.operationalStatus === "ACTIVE" &&
+      entry.status.shopifyDiscountStatus === "MISSING",
   );
-  const unsyncedVolume = volumeBundles.filter(
-    (bundle) => bundle.status === "ACTIVE" && !bundle.automaticDiscountId,
+  const invalidCrossSell = crossSellStatuses.filter(
+    (entry) =>
+      entry.status.operationalStatus === "ACTIVE" &&
+      (!entry.bundle.productHandle ||
+        entry.bundle.offers.length === 0 ||
+        entry.bundle.offers.some((offer) => offer.items.length === 0)),
   );
-  const invalidVolume = volumeBundles.filter(
-    (bundle) =>
-      !bundle.productHandle ||
-      bundle.offers.length === 0 ||
-      bundle.offers.some(
-        (offer, index) =>
-          offer.items.length !== 1 || Number(offer.items[0]?.quantity || 0) !== index + 1,
-      ),
+  const missingVolumeDiscounts = volumeStatuses.filter(
+    (entry) =>
+      entry.status.operationalStatus === "ACTIVE" &&
+      entry.status.shopifyDiscountStatus === "MISSING",
   );
-  const configuredVolumeHandleSet = new Set(
-    volumeBundles
-      .map((bundle) => bundle.productHandle)
-      .filter((handle): handle is string => Boolean(handle)),
-  );
-  const enabledWithoutConfiguredVolume = simpleSettings.filter(
-    (setting) => !configuredVolumeHandleSet.has(setting.productHandle),
+  const invalidVolume = volumeStatuses.filter(
+    (entry) =>
+      entry.status.operationalStatus === "ACTIVE" &&
+      (!entry.bundle.productHandle ||
+        entry.bundle.offers.length === 0 ||
+        entry.bundle.offers.some((offer) => {
+          if (offer.items.length !== offer.quantity) return true;
+          return offer.items.some((item) => Number(item.quantity || 0) !== 1);
+        })),
   );
 
   const items: DiagnosticItem[] = [];
@@ -135,37 +248,62 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
   });
 
   items.push({
-    id: "cross-sell-sync",
-    severity: unsyncedCrossSell.length === 0 ? "healthy" : "warning",
+    id: "widget-placement",
+    severity: liveWidgetIssues.length === 0 ? "healthy" : "critical",
     title:
-      unsyncedCrossSell.length === 0
+      liveWidgetIssues.length === 0
+        ? "Bundle widget placement looks valid"
+        : "Bundle widget placement needs attention",
+    summary:
+      liveWidgetIssues.length === 0
+        ? "The bundle appears only once and only on product pages."
+        : `${liveWidgetIssues.length} widget placement issue(s) were detected. The bundle should appear once, only on a product page.`,
+    details:
+      liveWidgetIssues.length === 0
+        ? ["No invalid widget placement was detected on the scanned storefront pages."]
+        : liveWidgetIssues.map((issue) =>
+            issue.kind === "outside-product-page"
+              ? `Outside product page - Page: ${issue.pagePath} | Block: ${issue.blockId}`
+              : `Duplicate on product page - Page: ${issue.pagePath} | Block: ${issue.blockId}`,
+          ),
+  });
+
+  items.push({
+    id: "cross-sell-sync",
+    severity: missingCrossSellDiscounts.length === 0 ? "healthy" : "warning",
+    title:
+      missingCrossSellDiscounts.length === 0
         ? "All active cross-sell bundles are synced"
         : "Some active cross-sell bundles need discount sync",
     summary:
-      unsyncedCrossSell.length === 0
+      missingCrossSellDiscounts.length === 0
         ? "Automatic discounts look healthy for active cross-sell bundles."
-        : `${unsyncedCrossSell.length} active cross-sell bundle(s) are missing an automatic discount ID.`,
+        : `${missingCrossSellDiscounts.length} active cross-sell bundle(s) are missing their Shopify discount.`,
     details:
-      unsyncedCrossSell.length === 0
+      missingCrossSellDiscounts.length === 0
         ? ["No action needed right now."]
-        : unsyncedCrossSell.map((bundle) => `${bundle.title} (${bundle.productHandle || "missing handle"})`),
+        : missingCrossSellDiscounts.map(
+            ({ bundle }) => `${bundle.title} (${bundle.productHandle || "missing handle"})`,
+          ),
   });
 
   items.push({
     id: "volume-sync",
-    severity: unsyncedVolume.length === 0 ? "healthy" : "warning",
+    severity: missingVolumeDiscounts.length === 0 ? "healthy" : "warning",
     title:
-      unsyncedVolume.length === 0
+      missingVolumeDiscounts.length === 0
         ? "All active volume bundles are synced"
         : "Some active volume bundles need discount sync",
     summary:
-      unsyncedVolume.length === 0
+      missingVolumeDiscounts.length === 0
         ? "Automatic discounts look healthy for active volume bundles."
-        : `${unsyncedVolume.length} active volume bundle(s) are missing an automatic discount ID.`,
+        : `${missingVolumeDiscounts.length} active volume bundle(s) are missing their Shopify discount.`,
     details:
-      unsyncedVolume.length === 0
+      missingVolumeDiscounts.length === 0
         ? ["No action needed right now."]
-        : unsyncedVolume.map((bundle) => `${bundle.title} (${bundle.productHandle || "missing handle"})`),
+        : missingVolumeDiscounts.map(
+            ({ bundle }) => `${bundle.title} (${bundle.productHandle || "missing handle"})`,
+          ),
   });
 
   items.push({
@@ -201,7 +339,9 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
     details:
       invalidCrossSell.length === 0
         ? ["No incomplete active cross-sell bundles detected."]
-        : invalidCrossSell.map((bundle) => `${bundle.title} (${bundle.productHandle || "missing handle"})`),
+        : invalidCrossSell.map(
+            ({ bundle }) => `${bundle.title} (${bundle.productHandle || "missing handle"})`,
+          ),
   });
 
   items.push({
@@ -213,29 +353,14 @@ export async function loadDiagnosticsSnapshot(params: { shop: string }) {
         : "Some volume bundles have an invalid quantity ladder",
     summary:
       invalidVolume.length === 0
-        ? "Each offer contains exactly one repeated item with the expected quantity."
-        : `${invalidVolume.length} volume bundle(s) do not match the expected 1x / 2x / 3x ladder shape.`,
+        ? "Each active volume bundle follows the expected repeated-item ladder."
+        : `${invalidVolume.length} active volume bundle(s) do not match the expected 1x / 2x / 3x ladder shape.`,
     details:
       invalidVolume.length === 0
         ? ["No invalid volume bundle ladders detected."]
-        : invalidVolume.map((bundle) => `${bundle.title} (${bundle.productHandle || "missing handle"})`),
-  });
-
-  items.push({
-    id: "volume-fallback",
-    severity: enabledWithoutConfiguredVolume.length === 0 ? "healthy" : "warning",
-    title:
-      enabledWithoutConfiguredVolume.length === 0
-        ? "Enabled volume pages are backed by configured bundles"
-        : "Some enabled volume pages still rely on fallback behavior",
-    summary:
-      enabledWithoutConfiguredVolume.length === 0
-        ? "Every enabled product page has a real admin-configured volume bundle."
-        : `${enabledWithoutConfiguredVolume.length} enabled product page(s) still rely on the legacy fallback instead of a configured volume bundle.`,
-    details:
-      enabledWithoutConfiguredVolume.length === 0
-        ? ["No action needed right now."]
-        : enabledWithoutConfiguredVolume.map((setting) => setting.productHandle),
+        : invalidVolume.map(
+            ({ bundle }) => `${bundle.title} (${bundle.productHandle || "missing handle"})`,
+          ),
   });
 
   const summary = {

@@ -33,6 +33,7 @@ export async function loadProductSnapshots(
                 title
                 price
                 availableForSale
+                inventoryQuantity
                 image {
                   url
                 }
@@ -62,6 +63,10 @@ export async function loadProductSnapshots(
         price: variant.price,
         featuredImage: variant.image?.url || null,
         availableForSale: variant.availableForSale,
+        inventoryQuantity:
+          typeof variant.inventoryQuantity === "number"
+            ? variant.inventoryQuantity
+            : null,
       })),
     });
   }

@@ -7,6 +7,7 @@ export async function deactivateOtherActiveBundlesForProduct(
   params: {
     shop: string;
     productHandle: string;
+    bundleType?: "CROSS_SELL" | "VOLUME";
     keepBundleId?: string;
   },
 ) {
@@ -16,7 +17,7 @@ export async function deactivateOtherActiveBundlesForProduct(
   const bundlesToDeactivate = await tx.bundle.findMany({
     where: {
       shop: params.shop,
-      bundleType: "CROSS_SELL",
+      bundleType: params.bundleType || "CROSS_SELL",
       productHandle,
       status: "ACTIVE",
       ...(params.keepBundleId ? { NOT: { id: params.keepBundleId } } : {}),
