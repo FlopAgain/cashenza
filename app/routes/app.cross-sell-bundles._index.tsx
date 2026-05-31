@@ -40,6 +40,9 @@ type BundleCard = {
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await requireStarterPlan(request);
+  const url = new URL(request.url);
+  const searchQuery = url.searchParams.get("q")?.trim() || "";
+  const requestedPage = Math.max(1, Number(url.searchParams.get("page") || 1));
 
   const [products, bundles] = await Promise.all([
     loadShopProducts(admin),
@@ -91,12 +94,50 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         variantsCount: 0,
         availableStock: 0,
         status: "UNKNOWN",
+        collections: [],
       },
       bundles: [bundle],
     });
   }
 
-  return { groups: Array.from(groupsMap.values()) };
+  const groups = Array.from(groupsMap.values());
+  const normalizedQuery = searchQuery.toLowerCase();
+  const filteredGroups = normalizedQuery
+    ? groups.filter((group) =>
+        [
+          group.product.title,
+          group.product.handle,
+          ...(group.product.collections || []).flatMap((collection: any) => [
+            collection.title,
+            collection.handle,
+          ]),
+          ...group.bundles.map((bundle) => bundle.title),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery),
+      )
+    : groups;
+
+  const perPage = 4;
+  const totalPages = Math.max(1, Math.ceil(filteredGroups.length / perPage));
+  const page = Math.min(requestedPage, totalPages);
+  const paginatedGroups = filteredGroups.slice((page - 1) * perPage, page * perPage);
+
+  return {
+    groups: paginatedGroups,
+    searchQuery,
+    pagination: {
+      page,
+      totalPages,
+      totalItems: filteredGroups.length,
+      perPage,
+    },
+    summary: {
+      enabledCount: bundlesWithStatus.filter((bundle) => bundle.shopifyDiscountStatus === "ACTIVE").length,
+      totalProducts: groups.length,
+    },
+  };
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
@@ -236,10 +277,21 @@ function formatSyncStatus(bundle: BundleCard) {
 }
 
 export default function CrossSellBundlesIndexPage() {
-  const { groups } = useLoaderData<typeof loader>();
+  const { groups, searchQuery, pagination, summary } = useLoaderData<typeof loader>();
+
+  function buildPageHref(page: number) {
+    const params = new URLSearchParams();
+    if (searchQuery) params.set("q", searchQuery);
+    params.set("page", String(page));
+    return `/app/cross-sell-bundles?${params.toString()}`;
+  }
 
   return (
     <s-page heading="Cross-sell bundles">
+      <s-button slot="primary-action" href="/app">
+        Back to dashboard
+      </s-button>
+
       <Link to="/app/bundles/new" style={styles.primaryLink}>
         Add new bundle
       </Link>
@@ -253,109 +305,199 @@ export default function CrossSellBundlesIndexPage() {
             cross-sell bundle alongside one volume bundle when both are active.
           </p>
         </div>
+        <div style={styles.metricRow}>
+          <MetricCard label="Products" value={String(summary.totalProducts)} />
+          <MetricCard label="Cross-sell enabled" value={String(summary.enabledCount)} />
+        </div>
       </section>
 
-      {groups.length === 0 ? (
-        <div style={styles.emptyState}>
-          <h3 style={styles.emptyTitle}>No cross-sell bundles yet</h3>
-          <p style={styles.emptyText}>
-            Start with one high-intent product and create a richer bundle with the page
-            product plus additional products and discounts.
-          </p>
-          <Link to="/app/bundles/new" style={styles.buttonLink}>
-            Add new bundle
-          </Link>
+      <section style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <div>
+            <h2 style={styles.sectionTitle}>Product coverage</h2>
+            <p style={styles.sectionText}>
+              Search products, manage cross-sell bundles, and quickly spot product stock and discount status.
+            </p>
+          </div>
         </div>
-      ) : (
-        <div style={styles.grid}>
-          {groups.map((group) => (
-            <article key={group.product.handle} style={styles.card}>
-              <div style={styles.productHeader}>
-                {group.product.featuredImage ? (
-                  <img src={group.product.featuredImage} alt="" style={styles.productImage} />
-                ) : (
-                  <span style={styles.productImageFallback} />
-                )}
-                <div>
-                  <h3 style={styles.cardTitle}>{group.product.title}</h3>
-                  <p style={styles.handle}>Handle: {group.product.handle}</p>
+
+        <Form method="get" style={styles.searchBar}>
+          <input
+            type="search"
+            name="q"
+            defaultValue={searchQuery}
+            placeholder="Search by product title, handle, or collection"
+            style={styles.searchInput}
+          />
+          <button type="submit" style={styles.secondaryAction}>
+            Search
+          </button>
+          {searchQuery ? (
+            <Link to="/app/cross-sell-bundles" style={styles.clearLink}>
+              Clear
+            </Link>
+          ) : null}
+        </Form>
+
+        {groups.length === 0 ? (
+          <div style={styles.emptyState}>
+            <h3 style={styles.emptyTitle}>
+              {searchQuery ? "No matching cross-sell bundles found" : "No cross-sell bundles yet"}
+            </h3>
+            <p style={styles.emptyText}>
+              {searchQuery
+                ? "Try another keyword, collection, or clear the search."
+                : "Start with one high-intent product and create a richer bundle with the page product plus additional products and discounts."}
+            </p>
+            <Link to="/app/bundles/new" style={styles.buttonLink}>
+              Add new bundle
+            </Link>
+          </div>
+        ) : (
+          <>
+            <div style={styles.grid}>
+              {groups.map((group) => (
+                <article key={group.product.handle} style={styles.card}>
+                  <div style={styles.cardTop}>
+                    <div style={styles.identity}>
+                      {group.product.featuredImage ? (
+                        <img src={group.product.featuredImage} alt={group.product.title} style={styles.image} />
+                      ) : (
+                        <div style={styles.imagePlaceholder}>No image</div>
+                      )}
+                      <div>
+                        <h3 style={styles.cardTitle}>{group.product.title}</h3>
+                        <p style={styles.handle}>Handle: {group.product.handle}</p>
+                      </div>
+                    </div>
+                    <StatusPill
+                      label={group.bundles.some((bundle) => bundle.shopifyDiscountStatus === "ACTIVE") ? "Bundle ON" : "Bundle OFF"}
+                      kind={group.bundles.some((bundle) => bundle.shopifyDiscountStatus === "ACTIVE") ? "success" : "warning"}
+                      title={
+                        group.bundles.some((bundle) => bundle.shopifyDiscountStatus === "ACTIVE")
+                          ? "At least one active cross-sell bundle is available for this product."
+                          : "No active cross-sell bundle is currently available for this product."
+                      }
+                    />
+                  </div>
+
+                  <div style={styles.statsRow}>
+                    <InlineStat
+                      label="Variants"
+                      value={String(group.product.variantsCount)}
+                      title={`${group.product.variantsCount} Shopify variant${group.product.variantsCount === 1 ? "" : "s"} are available for this product.`}
+                    />
+                    <InlineStat
+                      label="Stock"
+                      value={
+                        group.product.availableStock > 0
+                          ? `${group.product.availableStock} available`
+                          : "Out of stock"
+                      }
+                      title={
+                        group.product.availableStock > 0
+                          ? `${group.product.availableStock} units are currently available across this product inventory.`
+                          : "This product is currently out of stock."
+                      }
+                    />
+                  </div>
+
+                  <div style={styles.bundleStack}>
+                    {group.bundles.map((bundle) => (
+                      <div key={bundle.id} style={styles.bundleRow}>
+                        <div>
+                          <div style={styles.statusRow}>
+                            <StatusPill
+                              label={resolveShopifyDiscountStatusLabel(bundle.shopifyDiscountStatus).toUpperCase()}
+                              kind={bundle.shopifyDiscountStatus === "ACTIVE" ? "success" : "warning"}
+                              title={`Shopify automatic discount status: ${resolveShopifyDiscountStatusLabel(bundle.shopifyDiscountStatus)}.`}
+                            />
+                            <StatusPill
+                              label={formatSyncStatus(bundle)}
+                              kind={bundle.automaticDiscountId ? "success" : "warning"}
+                              title={
+                                bundle.automaticDiscountId
+                                  ? "This bundle is linked to a Shopify automatic discount."
+                                  : "This bundle is missing its Shopify automatic discount."
+                              }
+                            />
+                          </div>
+                          <h4 style={styles.bundleTitle}>{bundle.title}</h4>
+                          <div style={styles.statsRow}>
+                            <InlineStat
+                              label="Offers"
+                              value={String(bundle.offers.length)}
+                              title={`${bundle.offers.length} offer${bundle.offers.length === 1 ? "" : "s"} are configured in this cross-sell bundle.`}
+                            />
+                            <InlineStat
+                              label="Updated"
+                              value={new Date(bundle.updatedAt).toLocaleDateString("fr-FR")}
+                              title={`Last updated on ${new Date(bundle.updatedAt).toLocaleDateString("fr-FR")}.`}
+                            />
+                            <InlineStat
+                              label="Discount"
+                              value={formatDiscountLabel(bundle)}
+                              title={`Main configured discount: ${formatDiscountLabel(bundle)}.`}
+                            />
+                          </div>
+                        </div>
+
+                        <div style={styles.actions}>
+                          <Link
+                            to={`/app/bundles/${bundle.id}?returnTo=/app/cross-sell-bundles`}
+                            style={styles.buttonLink}
+                          >
+                            Edit
+                          </Link>
+                          <BundlePostButton
+                            bundleId={bundle.id}
+                            intent={bundle.status === "ACTIVE" ? "toggle" : "activate"}
+                            label={bundle.status === "ACTIVE" ? "Deactivate" : "Activate"}
+                          />
+                          <Form method="post" style={styles.inlineForm}>
+                            <input type="hidden" name="intent" value="duplicate" />
+                            <input type="hidden" name="bundleId" value={bundle.id} />
+                            <button type="submit" style={styles.secondaryAction}>
+                              Duplicate
+                            </button>
+                          </Form>
+                          <BundlePostButton
+                            bundleId={bundle.id}
+                            intent="delete"
+                            label="Delete"
+                            danger
+                            confirm="Delete this cross-sell bundle and its Shopify discount?"
+                          />
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </article>
+              ))}
+            </div>
+
+            {pagination.totalPages > 1 ? (
+              <div style={styles.paginationBar}>
+                <span style={styles.paginationText}>
+                  Page {pagination.page} / {pagination.totalPages}
+                </span>
+                <div style={styles.paginationActions}>
+                  {pagination.page > 1 ? (
+                    <Link to={buildPageHref(pagination.page - 1)} style={styles.buttonLink}>
+                      Previous
+                    </Link>
+                  ) : null}
+                  {pagination.page < pagination.totalPages ? (
+                    <Link to={buildPageHref(pagination.page + 1)} style={styles.buttonLink}>
+                      Next
+                    </Link>
+                  ) : null}
                 </div>
               </div>
-
-              <div style={styles.bundleStack}>
-                {group.bundles.map((bundle) => (
-                  <div key={bundle.id} style={styles.bundleRow}>
-                    <div>
-                      <div style={styles.statusRow}>
-                        <StatusPill
-                          label={resolveShopifyDiscountStatusLabel(bundle.shopifyDiscountStatus).toUpperCase()}
-                          kind={bundle.shopifyDiscountStatus === "ACTIVE" ? "success" : "warning"}
-                          title={`Shopify automatic discount status: ${resolveShopifyDiscountStatusLabel(bundle.shopifyDiscountStatus)}.`}
-                        />
-                        <StatusPill
-                          label={formatSyncStatus(bundle)}
-                          kind={bundle.automaticDiscountId ? "success" : "warning"}
-                          title={
-                            bundle.automaticDiscountId
-                              ? "This bundle is linked to a Shopify automatic discount."
-                              : "This bundle is missing its Shopify automatic discount."
-                          }
-                        />
-                      </div>
-                      <h4 style={styles.bundleTitle}>{bundle.title}</h4>
-                      <div style={styles.statsRow}>
-                        <InlineStat
-                          label="Offers"
-                          value={String(bundle.offers.length)}
-                          title={`${bundle.offers.length} offer${bundle.offers.length === 1 ? "" : "s"} are configured in this cross-sell bundle.`}
-                        />
-                        <InlineStat
-                          label="Updated"
-                          value={new Date(bundle.updatedAt).toLocaleDateString("fr-FR")}
-                          title={`Last updated on ${new Date(bundle.updatedAt).toLocaleDateString("fr-FR")}.`}
-                        />
-                        <InlineStat
-                          label="Discount"
-                          value={formatDiscountLabel(bundle)}
-                          title={`Main configured discount: ${formatDiscountLabel(bundle)}.`}
-                        />
-                      </div>
-                    </div>
-
-                    <div style={styles.actions}>
-                      <Link
-                        to={`/app/bundles/${bundle.id}?returnTo=/app/cross-sell-bundles`}
-                        style={styles.buttonLink}
-                      >
-                        Edit
-                      </Link>
-                      <BundlePostButton
-                        bundleId={bundle.id}
-                        intent={bundle.status === "ACTIVE" ? "toggle" : "activate"}
-                        label={bundle.status === "ACTIVE" ? "Deactivate" : "Activate"}
-                      />
-                      <Form method="post">
-                        <input type="hidden" name="intent" value="duplicate" />
-                        <input type="hidden" name="bundleId" value={bundle.id} />
-                        <button type="submit" style={styles.secondaryAction}>
-                          Duplicate
-                        </button>
-                      </Form>
-                      <BundlePostButton
-                        bundleId={bundle.id}
-                        intent="delete"
-                        label="Delete"
-                        danger
-                        confirm="Delete this cross-sell bundle and its Shopify discount?"
-                      />
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+            ) : null}
+          </>
+        )}
+      </section>
     </s-page>
   );
 }
@@ -387,6 +529,15 @@ function BundlePostButton({
         {label}
       </button>
     </Form>
+  );
+}
+
+function MetricCard({ label, value }: { label: string; value: string }) {
+  return (
+    <div style={styles.metricCard}>
+      <div style={styles.metricLabel}>{label}</div>
+      <div style={styles.metricValue}>{value}</div>
+    </div>
   );
 }
 
@@ -425,6 +576,8 @@ const styles: Record<string, CSSProperties> = {
     background: "linear-gradient(135deg, #f5f0e8 0%, #e4efe4 52%, #dce8f6 100%)",
     border: "1px solid #d8ddd2",
     marginBottom: "20px",
+    display: "grid",
+    gap: "18px",
   },
   badge: {
     display: "inline-flex",
@@ -452,6 +605,73 @@ const styles: Record<string, CSSProperties> = {
     color: "#31412f",
     maxWidth: "64ch",
   },
+  metricRow: {
+    display: "grid",
+    gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+    gap: "12px",
+  },
+  metricCard: {
+    padding: "16px",
+    borderRadius: "18px",
+    background: "#ffffff",
+    border: "1px solid #dce2d8",
+    display: "grid",
+    gap: "8px",
+  },
+  metricLabel: {
+    fontSize: "12px",
+    textTransform: "uppercase",
+    letterSpacing: "0.06em",
+    color: "#5a6757",
+    fontWeight: 700,
+  },
+  metricValue: {
+    fontSize: "28px",
+    fontWeight: 800,
+    lineHeight: 1,
+    color: "#172315",
+  },
+  section: {
+    display: "grid",
+    gap: "16px",
+  },
+  sectionHeader: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "end",
+    gap: "16px",
+  },
+  sectionTitle: {
+    margin: 0,
+    fontSize: "24px",
+    color: "#172315",
+  },
+  sectionText: {
+    margin: "6px 0 0",
+    color: "#556351",
+    fontSize: "14px",
+  },
+  searchBar: {
+    display: "flex",
+    gap: "12px",
+    alignItems: "center",
+    flexWrap: "wrap",
+  },
+  searchInput: {
+    flex: "1 1 280px",
+    minHeight: "42px",
+    padding: "0 14px",
+    borderRadius: "999px",
+    border: "1px solid #ccd5c8",
+    background: "#ffffff",
+    fontSize: "14px",
+  },
+  clearLink: {
+    color: "#445740",
+    fontSize: "14px",
+    fontWeight: 600,
+    textDecoration: "none",
+  },
   emptyState: {
     padding: "26px",
     borderRadius: "22px",
@@ -473,7 +693,7 @@ const styles: Record<string, CSSProperties> = {
   },
   grid: {
     display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))",
+    gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
     gap: "16px",
   },
   card: {
@@ -528,6 +748,32 @@ const styles: Record<string, CSSProperties> = {
     justifyContent: "space-between",
     gap: "16px",
     alignItems: "start",
+  },
+  identity: {
+    display: "flex",
+    alignItems: "center",
+    gap: "14px",
+  },
+  image: {
+    width: "64px",
+    height: "64px",
+    objectFit: "cover",
+    borderRadius: "16px",
+    border: "1px solid #e3e7df",
+    background: "#f4f6f1",
+  },
+  imagePlaceholder: {
+    width: "64px",
+    height: "64px",
+    borderRadius: "16px",
+    border: "1px dashed #cdd5c8",
+    background: "#f8faf6",
+    color: "#66725f",
+    display: "grid",
+    placeItems: "center",
+    fontSize: "12px",
+    textAlign: "center",
+    padding: "6px",
   },
   statusRow: {
     display: "flex",
@@ -652,6 +898,24 @@ const styles: Record<string, CSSProperties> = {
     alignItems: "center",
     justifyContent: "center",
     marginBottom: "16px",
+  },
+  paginationBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: "12px",
+    padding: "4px 2px 0",
+    flexWrap: "wrap",
+  },
+  paginationText: {
+    fontSize: "13px",
+    color: "#5e6b59",
+    fontWeight: 600,
+  },
+  paginationActions: {
+    display: "flex",
+    gap: "10px",
+    alignItems: "center",
   },
   statusPill: {
     display: "inline-flex",

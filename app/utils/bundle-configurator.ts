@@ -63,6 +63,7 @@ export type BundleAppearanceDraft = {
   timerExpiredText: string;
   timerBackgroundColor: string;
   timerTextColor: string;
+  timerPrefixColor: string;
 };
 
 export type BundleDraftPayload = {
@@ -157,7 +158,7 @@ export function normalizeQuantity(value: number | string | null | undefined, fal
 export function createDefaultAppearance(): BundleAppearanceDraft {
   return {
     designPreset: "soft",
-    timerPreset: "soft",
+    timerPreset: "split-flap",
     effectsPreset: "fade in",
     primaryColor: "#8db28a",
     textColor: "#1a2118",
@@ -184,6 +185,7 @@ export function createDefaultAppearance(): BundleAppearanceDraft {
     timerExpiredText: "Offer expired",
     timerBackgroundColor: "#1a2118",
     timerTextColor: "#ffffff",
+    timerPrefixColor: "#6b7280",
   };
 }
 

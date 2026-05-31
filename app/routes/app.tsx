@@ -41,6 +41,8 @@ export default function App() {
         {needsFirstBundleSetup ? null : (
           <>
             <s-link href="/app/bundles">Bundles</s-link>
+            <s-link href="/app/volume-bundles">Volume</s-link>
+            <s-link href="/app/cross-sell-bundles">Cross-sells</s-link>
             <s-link href="/app/analytics">Analytics</s-link>
             <s-link href="/app/diagnostics">Diagnostics</s-link>
             <s-link href="/app/billing">Billing</s-link>

@@ -286,16 +286,18 @@ export default function BundlesIndex() {
               <div style={styles.bundleActionGrid}>
                 <div style={styles.bundleActionColumn}>
                   <span style={styles.actionColumnLabel}>Volume bundle</span>
-                  <Link
-                    to={
-                      product.volumeBundleId
-                        ? `/app/bundles/${product.volumeBundleId}`
-                        : `/app/bundles/new?productHandle=${encodeURIComponent(product.handle)}&productId=${encodeURIComponent(product.id)}`
-                    }
-                    style={styles.secondaryLink}
-                  >
-                    {product.volumeBundleId ? "Edit volume bundle" : "Configure volume bundle"}
-                  </Link>
+                  {product.volumeBundleId ? (
+                    <Link to={`/app/bundles/${product.volumeBundleId}`} style={styles.secondaryLink}>
+                      Edit volume bundle
+                    </Link>
+                  ) : (
+                    <ConfigureBundleButton
+                      bundleType="volume"
+                      productHandle={product.handle}
+                      productId={product.id}
+                      label="Configure volume bundle"
+                    />
+                  )}
                   {hasVolumeBundle ? (
                     <BundleActionButton
                       bundleId={product.volumeBundleId as string}
@@ -318,9 +320,12 @@ export default function BundlesIndex() {
                       Edit cross-sell bundle
                     </Link>
                   ) : (
-                    <Link to={`/app/bundles/new?productHandle=${encodeURIComponent(product.handle)}&productId=${encodeURIComponent(product.id)}`} style={styles.secondaryLink}>
-                      Configure cross-sell bundle
-                    </Link>
+                    <ConfigureBundleButton
+                      bundleType="cross-sell"
+                      productHandle={product.handle}
+                      productId={product.id}
+                      label="Configure cross-sell bundle"
+                    />
                   )}
                   {hasCrossSellBundle ? (
                     <BundleActionButton
@@ -413,6 +418,30 @@ function BundleActionButton({
         type="submit"
         style={active ? styles.warningButton : styles.secondaryButton}
       >
+        {label}
+      </button>
+    </Form>
+  );
+}
+
+function ConfigureBundleButton({
+  bundleType,
+  productHandle,
+  productId,
+  label,
+}: {
+  bundleType: "volume" | "cross-sell";
+  productHandle: string;
+  productId: string;
+  label: string;
+}) {
+  return (
+    <Form method="post" action="/app/bundles/new" style={styles.inlineForm}>
+      <input type="hidden" name="intent" value="create-bundle" />
+      <input type="hidden" name="bundleType" value={bundleType} />
+      <input type="hidden" name="productHandle" value={productHandle} />
+      <input type="hidden" name="productId" value={productId} />
+      <button type="submit" style={styles.secondaryLinkButton}>
         {label}
       </button>
     </Form>
@@ -803,6 +832,27 @@ const styles: Record<string, CSSProperties> = {
     whiteSpace: "normal",
     lineHeight: 1.15,
     overflowWrap: "anywhere",
+  },
+  secondaryLinkButton: {
+    minHeight: "36px",
+    padding: "0 10px",
+    borderRadius: "999px",
+    border: "1px solid #cfc5b1",
+    background: "#ffffff",
+    color: "#172315",
+    fontSize: "12px",
+    fontWeight: 800,
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    width: "100%",
+    boxSizing: "border-box",
+    minWidth: 0,
+    textAlign: "center",
+    whiteSpace: "normal",
+    lineHeight: 1.15,
+    overflowWrap: "anywhere",
+    cursor: "pointer",
   },
 };
 

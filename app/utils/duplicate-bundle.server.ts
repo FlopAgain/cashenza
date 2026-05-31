@@ -56,6 +56,7 @@ type SourceBundle = {
   timerExpiredText: string;
   timerBackgroundColor: string;
   timerTextColor: string;
+  timerPrefixColor: string;
   showVariantPicker: boolean;
   showVariantThumbnails: boolean;
   bestSellerOfferId: string | null;
@@ -102,6 +103,7 @@ export function buildDuplicatedBundleData(bundle: SourceBundle) {
     timerExpiredText: bundle.timerExpiredText,
     timerBackgroundColor: bundle.timerBackgroundColor,
     timerTextColor: bundle.timerTextColor,
+    timerPrefixColor: bundle.timerPrefixColor,
   };
 }
 

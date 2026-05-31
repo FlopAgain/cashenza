@@ -208,6 +208,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         timerExpiredText: appearance.timerExpiredText,
         timerBackgroundColor: appearance.timerBackgroundColor,
         timerTextColor: appearance.timerTextColor,
+        timerPrefixColor: appearance.timerPrefixColor,
       } as any,
     });
     savedBundleId = bundle.id;

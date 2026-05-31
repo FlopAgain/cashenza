@@ -22,6 +22,9 @@ const NATIVE_PRODUCT_CONTROL_SELECTORS = [
   ".product-form__input",
   ".product__selectors",
   ".product-form__submit",
+  "button[name='add']",
+  "button[type='submit'][name='add']",
+  ".shopify-payment-button__button",
   '[data-testid="standalone-add-to-cart"]',
 ];
 

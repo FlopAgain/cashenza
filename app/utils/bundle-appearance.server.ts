@@ -33,6 +33,7 @@ const APPEARANCE_SELECT = {
   timerExpiredText: true,
   timerBackgroundColor: true,
   timerTextColor: true,
+  timerPrefixColor: true,
 } as const;
 
 type BundleAppearanceRecord = {
@@ -78,6 +79,7 @@ export function bundleAppearanceToDraft(
     timerExpiredText: bundle.timerExpiredText ?? defaults.timerExpiredText,
     timerBackgroundColor: bundle.timerBackgroundColor ?? defaults.timerBackgroundColor,
     timerTextColor: bundle.timerTextColor ?? defaults.timerTextColor,
+    timerPrefixColor: bundle.timerPrefixColor ?? defaults.timerPrefixColor,
   };
 }
 
@@ -99,4 +101,3 @@ export async function loadReusableBundleAppearance(params: {
 
   return bundleAppearanceToDraft(bundle as BundleAppearanceRecord | null);
 }
-

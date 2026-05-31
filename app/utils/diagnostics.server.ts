@@ -12,6 +12,11 @@ export type DiagnosticItem = {
   details: string[];
 };
 
+export type DiagnosticsSnapshot = {
+  summary: Record<DiagnosticSeverity, number>;
+  items: DiagnosticItem[];
+};
+
 type AdminGraphqlClient = {
   graphql: (
     query: string,
@@ -96,7 +101,7 @@ async function loadLiveWidgetPlacementIssues(params: {
 export async function loadDiagnosticsSnapshot(params: {
   shop: string;
   admin: AdminGraphqlClient;
-}) {
+}): Promise<DiagnosticsSnapshot> {
   const [settings, crossSellBundles, volumeBundles, duplicateGroups, products] =
     await Promise.all([
       prisma.appSettings.findUnique({

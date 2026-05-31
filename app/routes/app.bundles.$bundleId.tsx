@@ -91,6 +91,7 @@ type LoadedBundle = {
   timerExpiredText: string;
   timerBackgroundColor: string;
   timerTextColor: string;
+  timerPrefixColor: string;
   offers: Array<{
     id: string;
     title: string;
@@ -179,6 +180,7 @@ function bundleToDraft(bundle: LoadedBundle): BundleDraftPayload {
       timerExpiredText: bundle.timerExpiredText,
       timerBackgroundColor: bundle.timerBackgroundColor,
       timerTextColor: bundle.timerTextColor,
+      timerPrefixColor: bundle.timerPrefixColor,
     },
   };
 }
@@ -428,6 +430,7 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
         timerExpiredText: appearance.timerExpiredText,
         timerBackgroundColor: appearance.timerBackgroundColor,
         timerTextColor: appearance.timerTextColor,
+        timerPrefixColor: appearance.timerPrefixColor,
       } as any,
     });
 

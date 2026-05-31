@@ -6,8 +6,8 @@ import { boundary } from "@shopify/shopify-app-react-router/server";
 
 import prisma from "../db.server";
 import { requireStarterPlan } from "../utils/billing.server";
-import { loadAnalyticsSnapshot } from "../utils/analytics.server";
-import { loadDiagnosticsSnapshot } from "../utils/diagnostics.server";
+import { loadAnalyticsSnapshot, type AnalyticsSnapshot } from "../utils/analytics.server";
+import { loadDiagnosticsSnapshot, type DiagnosticsSnapshot } from "../utils/diagnostics.server";
 import {
   reconcileBundleAutomaticDiscountState,
   syncBundleAutomaticDiscount,
@@ -26,6 +26,63 @@ import {
   ensureDefaultVolumeBundleForProduct,
   loadShopProducts,
 } from "../utils/volume-bundles.server";
+
+const emptyAnalyticsSnapshot: AnalyticsSnapshot = {
+  volumeEnabled: 0,
+  volumeConfigured: 0,
+  volumeActive: 0,
+  volumeDraft: 0,
+  volumeSynced: 0,
+  averageOffersPerVolume: "0.0",
+  crossSellActive: 0,
+  crossSellDraft: 0,
+  crossSellArchived: 0,
+  crossSellSynced: 0,
+  overriddenProducts: 0,
+  averageOffersPerCrossSell: "0.0",
+  totalCrossSellBundles: 0,
+  totalCrossSellOffers: 0,
+  syncCoverageRate: "0%",
+};
+
+function buildDiagnosticsFallback(error: unknown): DiagnosticsSnapshot {
+  const message = error instanceof Error ? error.message : "Unknown diagnostics error";
+
+  return {
+    summary: {
+      healthy: 0,
+      warning: 0,
+      critical: 1,
+    },
+    items: [
+      {
+        id: "diagnostics-unavailable",
+        severity: "critical",
+        title: "Diagnostics temporarily unavailable",
+        summary:
+          "Cashenza could not load diagnostics right now. This is usually caused by a temporary database or Shopify API interruption.",
+        details: [message],
+      },
+    ],
+  };
+}
+
+async function safeLoadDashboardData<T>({
+  label,
+  promise,
+  fallback,
+}: {
+  label: string;
+  promise: Promise<T>;
+  fallback: T | ((error: unknown) => T);
+}) {
+  try {
+    return await promise;
+  } catch (error) {
+    console.error(`Dashboard ${label} failed`, error);
+    return typeof fallback === "function" ? (fallback as (error: unknown) => T)(error) : fallback;
+  }
+}
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { session, admin } = await requireStarterPlan(request);
@@ -65,13 +122,21 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     };
   }
 
-  const analyticsPromise = loadAnalyticsSnapshot({
-    shop: session.shop,
-    admin,
+  const analyticsPromise = safeLoadDashboardData({
+    label: "analytics snapshot",
+    promise: loadAnalyticsSnapshot({
+      shop: session.shop,
+      admin,
+    }),
+    fallback: emptyAnalyticsSnapshot,
   });
-  const diagnosticsPromise = loadDiagnosticsSnapshot({
-    shop: session.shop,
-    admin,
+  const diagnosticsPromise = safeLoadDashboardData({
+    label: "diagnostics snapshot",
+    promise: loadDiagnosticsSnapshot({
+      shop: session.shop,
+      admin,
+    }),
+    fallback: buildDiagnosticsFallback,
   });
   const inspectionPromise = inspectCurrentProductTemplatePlacement({
     admin,
@@ -79,21 +144,25 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   });
 
   const [rawBundles, analytics, diagnostics, inspection] = await Promise.all([
-    prisma.bundle.findMany({
-      where: { shop: session.shop, bundleType: "CROSS_SELL" },
-      orderBy: { updatedAt: "desc" },
-      include: {
-        offers: {
-          orderBy: { sortOrder: "asc" },
-          select: {
-            id: true,
-            title: true,
-            discountType: true,
-            discountValue: true,
+    safeLoadDashboardData({
+      label: "bundle list",
+      promise: prisma.bundle.findMany({
+        where: { shop: session.shop },
+        orderBy: { updatedAt: "desc" },
+        include: {
+          offers: {
+            orderBy: { sortOrder: "asc" },
+            select: {
+              id: true,
+              title: true,
+              discountType: true,
+              discountValue: true,
+            },
           },
         },
-      },
-      take: 12,
+        take: 12,
+      }),
+      fallback: [],
     }),
     analyticsPromise,
     diagnosticsPromise,
@@ -102,10 +171,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const bundles = await Promise.all(
     rawBundles.map(async (bundle) => {
-      const reconciled = await reconcileBundleAutomaticDiscountState(admin, {
-        id: bundle.id,
-        status: bundle.status,
-        automaticDiscountId: bundle.automaticDiscountId,
+      const reconciled = await safeLoadDashboardData({
+        label: `bundle discount reconciliation ${bundle.id}`,
+        promise: reconcileBundleAutomaticDiscountState(admin, {
+          id: bundle.id,
+          status: bundle.status,
+          automaticDiscountId: bundle.automaticDiscountId,
+        }),
+        fallback: {
+          bundleStatus: bundle.status,
+          automaticDiscountId: bundle.automaticDiscountId,
+          shopifyDiscountStatus: "UNKNOWN",
+        },
       });
 
       return {
@@ -118,9 +195,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   );
 
   const activeBundles = bundles.filter((bundle) => bundle.status === "ACTIVE").length;
-  const draftBundles = bundles.filter((bundle) => bundle.status === "DRAFT").length;
-  const archivedBundles = bundles.filter((bundle) => bundle.status === "ARCHIVED").length;
-  const totalCrossSellBundles = activeBundles + draftBundles + archivedBundles;
+  const productPagesWithBundles = new Set(
+    bundles
+      .map((bundle) => bundle.productHandle)
+      .filter((handle): handle is string => Boolean(handle)),
+  ).size;
+  const activeShopifyDiscounts = bundles.filter(
+    (bundle) => bundle.shopifyDiscountStatus === "ACTIVE",
+  ).length;
+  const volumeActive = bundles.filter(
+    (bundle) => bundle.bundleType === "VOLUME" && bundle.status === "ACTIVE",
+  ).length;
+  const volumeDraft = bundles.filter(
+    (bundle) => bundle.bundleType === "VOLUME" && bundle.status === "DRAFT",
+  ).length;
+  const crossSellActive = bundles.filter(
+    (bundle) => bundle.bundleType === "CROSS_SELL" && bundle.status === "ACTIVE",
+  ).length;
+  const crossSellDraft = bundles.filter(
+    (bundle) => bundle.bundleType === "CROSS_SELL" && bundle.status === "DRAFT",
+  ).length;
 
   return {
     needsFirstBundleSetup: false,
@@ -130,11 +224,12 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     products: [],
     bundles,
     stats: {
-      total: totalCrossSellBundles,
-      active: activeBundles,
-      draft: draftBundles,
-      archived: archivedBundles,
-      simpleEnabled: analytics.volumeEnabled,
+      productPagesWithBundles,
+      activeShopifyDiscounts,
+      volumeActive,
+      volumeDraft,
+      crossSellActive,
+      crossSellDraft,
     },
     analytics,
     diagnostics,
@@ -191,6 +286,7 @@ async function createFirstCrossSellBundleForProduct({
       timerExpiredText: appearance.timerExpiredText,
       timerBackgroundColor: appearance.timerBackgroundColor,
       timerTextColor: appearance.timerTextColor,
+      timerPrefixColor: appearance.timerPrefixColor,
       offers: {
         create: [
           {
@@ -652,7 +748,22 @@ export default function Index() {
       : data.inspection;
   const placementAttempt =
     actionData && "placementAttempt" in actionData ? actionData.placementAttempt : null;
-  const criticalAlerts = diagnostics.items.filter((item) => item.severity === "critical");
+  const criticalAlerts = [
+    ...(latestInspection.status === "needs_placement"
+      ? [
+          {
+            id: "theme-placement-needs-repair",
+            title: "Bundle block needs placement. Run Repair storefront placement.",
+          },
+        ]
+      : []),
+    ...diagnostics.items
+      .filter((item) => item.severity === "critical")
+      .map((item) => ({
+        id: item.id,
+        title: item.title,
+      })),
+  ];
 
   return (
     <s-page heading="Cashenza Bundlify">
@@ -664,8 +775,8 @@ export default function Index() {
           </div>
           <h1 style={styles.heroTitle}>Build volume and cross-sell bundles that stay clear, premium, and conversion-first.</h1>
             <p style={styles.heroText}>
-            Cashenza Bundlify is moving toward one clear model: volume bundles for repeated quantities,
-            cross-sell bundles for product combinations, and theme styling kept separate from bundle logic.
+            Cashenza Bundlify have one clear model: volume bundles for repeated quantities,
+            cross-sell bundles for product combinations.
           </p>
           <div style={styles.heroActionGroups}>
             <div style={styles.heroActionGroup}>
@@ -676,7 +787,7 @@ export default function Index() {
                   <Link to="/app/bundles" style={styles.heroButtonLink}>Manage bundles</Link>
                 </div>
                 <p style={styles.heroActionGroupText}>
-                  Start from the admin, choose a product, then create the matching bundle and Shopify discount before the storefront block is placed automatically.
+                  Start from the admin, choose a product, then create the matching bundle and Shopify discount.
                 </p>
               </div>
             </div>
@@ -701,73 +812,31 @@ export default function Index() {
             <div style={styles.metricValueSmall}>{shop}</div>
           </div>
           <div style={styles.metricGrid}>
-            <MetricCard label="Cross-sell bundles" value={String(stats.total)} tone="dark" />
-            <MetricCard label="Cross-sell active" value={String(stats.active)} tone="green" />
-            <MetricCard label="Cross-sell draft" value={String(stats.draft)} tone="cream" />
-            <MetricCard label="Volume enabled" value={String(stats.simpleEnabled)} tone="muted" />
+            <MetricCard
+              label="Product pages with bundles"
+              value={String(stats.productPagesWithBundles)}
+              tone="dark"
+            />
+            <MetricCard
+              label="Active Shopify discounts"
+              value={String(stats.activeShopifyDiscounts)}
+              tone="green"
+            />
+            <MetricCard label="Volume active" value={String(stats.volumeActive)} tone="green" />
+            <MetricCard label="Volume draft" value={String(stats.volumeDraft)} tone="muted" />
+            <MetricCard
+              label="Cross-sells active"
+              value={String(stats.crossSellActive)}
+              tone="cream"
+            />
+            <MetricCard
+              label="Cross-sells drafts"
+              value={String(stats.crossSellDraft)}
+              tone="muted"
+            />
           </div>
 
         </div>
-      </section>
-
-      <section style={styles.placementHorizontal}>
-        <div>
-          <span style={styles.cardLabel}>Automatic placement</span>
-          <h2 style={styles.placementTitle}>Storefront block placement</h2>
-          <p style={styles.placementText}>
-            Cashenza inserts or repairs the bundle widget once on the default product template. The widget stays hidden until the current product has an active bundle.
-          </p>
-        </div>
-        <div style={styles.placementStatusGrid}>
-          <div style={styles.readinessBox}>
-            <strong>
-              {latestReadiness.status === "ready"
-                ? "Permissions ready"
-                : "Permissions missing"}
-            </strong>
-            <span>{latestReadiness.message}</span>
-            {latestReadiness.missingScopes.length > 0 ? (
-              <span>Missing scopes: {latestReadiness.missingScopes.join(", ")}</span>
-            ) : null}
-          </div>
-          <div style={styles.readinessBox}>
-            <strong>{formatPlacementInspectionTitle(latestInspection.status)}</strong>
-            <span>{latestInspection.message}</span>
-          </div>
-        </div>
-        <div style={styles.placementActions}>
-          <Form method="post">
-            <input type="hidden" name="intent" value="inspect-placement" />
-            <button type="submit" style={styles.secondaryAction}>
-              Inspect placement
-            </button>
-          </Form>
-          <Form method="post">
-            <input type="hidden" name="intent" value="repair-placement" />
-            <button type="submit" style={styles.primaryAction}>
-              Repair storefront placement
-            </button>
-          </Form>
-          <Form method="post">
-            <input type="hidden" name="intent" value="explain-product-placement" />
-            <button type="submit" style={styles.secondaryAction}>
-              Explain placement
-            </button>
-          </Form>
-        </div>
-        {placementAttempt ? (
-          <div style={styles.placementResult}>
-            <strong>{formatPlacementAttemptTitle(placementAttempt.status)}</strong>
-            <span>{placementAttempt.message}</span>
-            {placementAttempt.details.length > 0 ? (
-              <ul style={styles.compactList}>
-                {placementAttempt.details.map((detail) => (
-                  <li key={detail}>{detail}</li>
-                ))}
-              </ul>
-            ) : null}
-          </div>
-        ) : null}
       </section>
 
       <section style={styles.section}>
@@ -804,26 +873,90 @@ export default function Index() {
         </div>
       </section>
 
-      <section style={styles.section}>
-        <div style={styles.sectionHeader}>
+      <section style={styles.dashboardSplit}>
+        <div style={styles.placementCompact}>
           <div>
-            <h2 style={styles.sectionTitle}>Alerts</h2>
-            <p style={styles.sectionText}>Issues that need the merchant&apos;s attention</p>
+            <span style={styles.cardLabel}>Automatic placement</span>
+            <h2 style={styles.placementTitle}>Storefront block placement</h2>
+            <p style={styles.placementText}>
+              Cashenza inserts or repairs the bundle widget once on the default product template. The widget stays hidden until the current product has an active bundle.
+            </p>
           </div>
-          <Link to="/app/diagnostics" style={styles.heroButtonLink}>Open diagnostics</Link>
+          <Form method="post">
+            <input type="hidden" name="intent" value="repair-placement" />
+            <button type="submit" style={styles.repairPlacementButton}>
+              <svg
+                aria-hidden="true"
+                width="15"
+                height="15"
+                viewBox="0 0 24 24"
+                fill="none"
+                style={styles.buttonIcon}
+              >
+                <path
+                  d="M21 7.2a6.2 6.2 0 0 1-7.7 7.7L6.1 22 2 17.9l7.1-7.2A6.2 6.2 0 0 1 16.8 3l-3.2 3.2 4.2 4.2L21 7.2Z"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <span>Repair storefront placement</span>
+            </button>
+          </Form>
+          <div style={styles.placementStatusGrid}>
+            <div style={styles.readinessBox}>
+              <strong>
+                {latestReadiness.status === "ready"
+                  ? "Permissions ready"
+                  : "Permissions missing"}
+              </strong>
+              <span>{latestReadiness.message}</span>
+              {latestReadiness.missingScopes.length > 0 ? (
+                <span>Missing scopes: {latestReadiness.missingScopes.join(", ")}</span>
+              ) : null}
+            </div>
+            <div style={styles.readinessBox}>
+              <strong>{formatPlacementInspectionTitle(latestInspection.status)}</strong>
+              <span>{latestInspection.message}</span>
+            </div>
+          </div>
+          {placementAttempt ? (
+            <div style={styles.placementResult}>
+              <strong>{formatPlacementAttemptTitle(placementAttempt.status)}</strong>
+              <span>{placementAttempt.message}</span>
+              {placementAttempt.details.length > 0 ? (
+                <ul style={styles.compactList}>
+                  {placementAttempt.details.map((detail) => (
+                    <li key={detail}>{detail}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </div>
+          ) : null}
         </div>
 
-        {criticalAlerts.length === 0 ? (
-          <div style={styles.alertsEmpty}>No critical alerts right now.</div>
-        ) : (
-          <div style={styles.alertsStack}>
-            {criticalAlerts.map((item) => (
-              <article key={item.id} style={styles.alertCard}>
-                <strong>{item.title}</strong>
-              </article>
-            ))}
+        <div style={styles.alertsPanel}>
+          <div style={styles.sectionHeader}>
+            <div>
+              <h2 style={styles.sectionTitle}>Alerts</h2>
+              <p style={styles.sectionText}>Issues that need the merchant&apos;s attention</p>
+            </div>
+            <Link to="/app/diagnostics" style={styles.heroButtonLink}>Open diagnostics</Link>
           </div>
-        )}
+
+          {criticalAlerts.length === 0 ? (
+            <div style={styles.alertsEmpty}>No critical alerts right now.</div>
+          ) : (
+            <div style={styles.alertsStack}>
+              {criticalAlerts.map((item) => (
+                <article key={item.id} style={styles.alertCard}>
+                  <strong>{item.title}</strong>
+                </article>
+              ))}
+            </div>
+          )}
+        </div>
       </section>
 
       <section style={styles.section}>
@@ -1316,6 +1449,31 @@ const styles: Record<string, CSSProperties> = {
     gap: "16px",
     marginBottom: "20px",
   },
+  dashboardSplit: {
+    display: "grid",
+    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    gap: "16px",
+    alignItems: "stretch",
+    marginBottom: "20px",
+  },
+  placementCompact: {
+    display: "grid",
+    gap: "14px",
+    alignContent: "start",
+    padding: "18px",
+    borderRadius: "22px",
+    background: "#f7efe1",
+    border: "1px solid #e6dac5",
+  },
+  alertsPanel: {
+    display: "grid",
+    gap: "16px",
+    alignContent: "start",
+    padding: "18px",
+    borderRadius: "22px",
+    background: "#ffffff",
+    border: "1px solid #dce2d8",
+  },
   placementHorizontal: {
     display: "grid",
     gridTemplateColumns: "minmax(260px, 1fr) minmax(320px, 1.4fr) auto",
@@ -1358,6 +1516,25 @@ const styles: Record<string, CSSProperties> = {
     display: "grid",
     gap: "10px",
     justifyItems: "stretch",
+  },
+  repairPlacementButton: {
+    minHeight: "36px",
+    padding: "0 14px",
+    borderRadius: "999px",
+    border: "1px solid #ccd5c8",
+    background: "#ffffff",
+    color: "#172315",
+    fontSize: "13px",
+    fontWeight: 700,
+    cursor: "pointer",
+    display: "inline-flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: "8px",
+    width: "fit-content",
+  },
+  buttonIcon: {
+    flex: "0 0 auto",
   },
   readinessBox: {
     display: "grid",

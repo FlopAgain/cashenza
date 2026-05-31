@@ -402,6 +402,7 @@ export async function ensureDefaultVolumeBundleForProduct(params: {
         timerExpiredText: appearance.timerExpiredText,
         timerBackgroundColor: appearance.timerBackgroundColor,
         timerTextColor: appearance.timerTextColor,
+        timerPrefixColor: appearance.timerPrefixColor,
       } as any,
     });
 

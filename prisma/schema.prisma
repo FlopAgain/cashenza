@@ -101,6 +101,7 @@ model Bundle {
   timerExpiredText     String          @default("Offer expired")
   timerBackgroundColor String         @default("#1a2118")
   timerTextColor       String         @default("#ffffff")
+  timerPrefixColor     String         @default("#6b7280")
   createdAt             DateTime       @default(now())
   updatedAt             DateTime       @updatedAt
   offers                BundleOffer[]

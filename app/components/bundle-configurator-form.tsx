@@ -864,9 +864,9 @@ const CONFIGURATOR_LAYOUT_CSS = `
   }
 
   .cashenza-preview-widget .bundle-widget__topbar {
-    display: flex;
-    justify-content: space-between;
-    align-items: flex-end;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    justify-items: stretch;
     gap: 16px;
     margin-bottom: 8px;
   }
@@ -891,7 +891,8 @@ const CONFIGURATOR_LAYOUT_CSS = `
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.02em;
-    margin-left: auto;
+    justify-self: end;
+    margin-left: 0;
     margin-bottom: 2px;
     flex: 0 0 auto;
   }
@@ -922,10 +923,13 @@ const CONFIGURATOR_LAYOUT_CSS = `
   }
 
   .cashenza-preview-widget .bundle-widget__timer--split-flap {
-    border-radius: 14px;
-    padding: 12px 14px;
-    background: var(--bundle-timer-bg);
-    box-shadow: 0 16px 30px rgba(0, 0, 0, 0.22);
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 6px;
+    border-radius: 0;
+    padding: 0;
+    background: transparent;
+    box-shadow: none;
   }
 
   .cashenza-preview-widget .bundle-widget__timer-label,
@@ -950,6 +954,11 @@ const CONFIGURATOR_LAYOUT_CSS = `
     white-space: nowrap;
   }
 
+  .cashenza-preview-widget .bundle-widget__timer--split-flap .bundle-widget__timer-value {
+    perspective: 550px;
+    transform-style: preserve-3d;
+  }
+
   .cashenza-preview-widget .bundle-widget__timer-digit {
     display: inline-flex;
     position: relative;
@@ -970,13 +979,127 @@ const CONFIGURATOR_LAYOUT_CSS = `
   }
 
   .cashenza-preview-widget .bundle-widget__timer--split-flap .bundle-widget__timer-digit {
-    border-radius: 5px;
+    position: relative;
+    display: grid;
+    width: 1em;
+    min-width: 1em;
+    height: 1.5em;
+    border-radius: 0.1em;
+    color: var(--bundle-timer-value-color, #ffffff);
+    font-size: 24px;
+    font-weight: 900;
+    line-height: 1;
     background: linear-gradient(
       180deg,
-      rgba(255, 255, 255, 0.18) 0 49%,
-      rgba(0, 0, 0, 0.2) 50% 100%
+      var(--bundle-timer-flap-bg-top, #191919) 0%,
+      var(--bundle-timer-flap-bg, #111111) 49%,
+      var(--bundle-timer-flap-divider, #050505) 50%,
+      var(--bundle-timer-flap-bg-bottom, #1f1f1f) 100%
     );
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 8px rgba(0, 0, 0, 0.22);
+    box-shadow: 0 0 12px rgba(0, 0, 0, 0.3);
+    text-shadow: 0 1px 0 rgba(0, 0, 0, 0.8);
+    text-align: center;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base,
+  .cashenza-preview-widget .bundle-widget__timer-flap {
+    grid-row: 1 / 1;
+    grid-column: 1 / 1;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base {
+    display: grid;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base-top,
+  .cashenza-preview-widget .bundle-widget__timer-base-bottom {
+    position: relative;
+    grid-row: 1;
+    grid-column: 1;
+    display: grid;
+    place-items: center;
+    width: 100%;
+    height: 100%;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base-top::after,
+  .cashenza-preview-widget .bundle-widget__timer-base-bottom::after,
+  .cashenza-preview-widget .bundle-widget__timer-flap::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    width: 100%;
+    height: 1px;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base-top {
+    clip-path: inset(0 0 50% 0);
+    background: var(--bundle-timer-flap-bg, #111111);
+    border-radius: 0.1em 0.1em 0 0;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base-top::after {
+    top: calc(50% - 1px);
+    background-color: color-mix(in srgb, var(--bundle-timer-flap-bg, #111111) 72%, black);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base-bottom {
+    clip-path: inset(50% 0 0 0);
+    background: var(--bundle-timer-flap-bg-bottom, #1f1f1f);
+    border-radius: 0 0 0.1em 0.1em;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-base-bottom::after {
+    bottom: calc(50% - 1px);
+    background-color: color-mix(in srgb, var(--bundle-timer-flap-bg-bottom, #1f1f1f) 72%, black);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap {
+    position: relative;
+    display: none;
+    backface-visibility: hidden;
+    grid-row: 1 / 1;
+    grid-column: 1 / 1;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap::before {
+    content: attr(data-content);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap.show {
+    display: block;
+    animation: cashenza-flip-top 0.6s ease-in-out forwards;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap--front {
+    clip-path: inset(0 0 50% 0);
+    transform-origin: center bottom;
+    transform: rotateX(0deg);
+    background: var(--bundle-timer-flap-bg, #111111);
+    border-radius: 0.1em 0.1em 0 0;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap--front::after {
+    top: calc(50% - 1px);
+    background-color: color-mix(in srgb, var(--bundle-timer-flap-bg, #111111) 72%, black);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap--back {
+    clip-path: inset(50% 0 0 0);
+    transform-origin: center top;
+    transform: rotateX(-180deg);
+    background: var(--bundle-timer-flap-bg-bottom, #1f1f1f);
+    border-radius: 0 0 0.1em 0.1em;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap--back.show {
+    animation-name: cashenza-flip-bottom;
+    animation-delay: 100ms;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer-flap--back::after {
+    bottom: calc(50% - 1px);
+    background-color: color-mix(in srgb, var(--bundle-timer-flap-bg-bottom, #1f1f1f) 72%, black);
   }
 
   .cashenza-preview-widget .bundle-widget__timer--split-flap .bundle-widget__timer-digit::after {
@@ -985,17 +1108,132 @@ const CONFIGURATOR_LAYOUT_CSS = `
     inset-inline: 0;
     top: 50%;
     height: 1px;
-    background: rgba(0, 0, 0, 0.35);
+    background: color-mix(in srgb, var(--bundle-timer-flap-divider, #050505) 62%, transparent);
     transform: translateY(-50%);
+    box-shadow: none;
   }
 
   .cashenza-preview-widget .bundle-widget__timer-separator {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    min-width: 6px;
+    min-width: 8px;
     font-weight: 900;
     opacity: 0.82;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap .bundle-widget__timer-separator {
+    height: 36px;
+    color: var(--bundle-timer-value-color, currentColor);
+    opacity: 0.82;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-slot] {
+    display: inline-grid;
+    place-content: center;
+    overflow: visible;
+    transform-style: preserve-3d;
+    --split-flap-crease: 2px;
+    --split-flap-flip-duration: 800ms;
+    --split-flap-timing-function: cubic-bezier(.215, .61, .355, 1);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-character] {
+    display: flex;
+    flex-direction: column;
+    gap: var(--split-flap-crease);
+    grid-area: 1 / 1;
+    pointer-events: none;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: z-index var(--split-flap-flip-duration) var(--split-flap-timing-function);
+    z-index: calc(var(--split-flap-is-current) * 2 + var(--split-flap-is-previous) + var(--split-flap-is-next));
+    --split-flap-total0: calc(var(--split-flap-total) - 1);
+    --split-flap-offset: calc(var(--split-flap-index) - var(--split-flap-current-character-index));
+    --split-flap-abs-offset: max(var(--split-flap-offset), calc(var(--split-flap-offset) * -1));
+    --split-flap-safe-abs-offset: max(var(--split-flap-abs-offset), 0.001);
+    --split-flap-direction: calc(var(--split-flap-offset) / var(--split-flap-safe-abs-offset));
+    --split-flap-past: min(0, var(--split-flap-direction));
+    --split-flap-future: max(0, var(--split-flap-direction));
+    --split-flap-is-current: clamp(0, calc(1 - var(--split-flap-abs-offset) * 1000), 1);
+    --split-flap-is-not-current: clamp(0, calc(1 - var(--split-flap-is-current)), 1);
+    --split-flap-is-previous: clamp(0, calc(1 - max(var(--split-flap-offset) + 1, (var(--split-flap-offset) + 1) * -1) * 1000), 1);
+    --split-flap-is-next: clamp(0, calc(1 - max(var(--split-flap-offset) - 1, (var(--split-flap-offset) - 1) * -1) * 1000), 1);
+    --split-flap-angle: calc((0.5 / var(--split-flap-total0)) * 1turn);
+    --split-flap-top-flap-angle: calc(var(--split-flap-abs-offset) * var(--split-flap-direction) * var(--split-flap-angle) + var(--split-flap-past) * 0.5turn);
+    --split-flap-bottom-flap-angle: calc(max(var(--split-flap-abs-offset) - 1, 0) * var(--split-flap-direction) * var(--split-flap-angle) + var(--split-flap-future) * 0.5turn);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-character]::after {
+    content: "";
+    display: block;
+    height: var(--split-flap-crease);
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 100%;
+    background: #060606;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-flap] {
+    align-items: center;
+    backface-visibility: hidden;
+    background: #151515;
+    border-radius: 3px;
+    box-shadow: inset 0 0 2px 0.75px rgba(255, 255, 255, 0.14), inset 0 0 0 1px rgba(0, 0, 0, 0.85);
+    box-sizing: content-box;
+    display: flex;
+    height: 0.86em;
+    justify-content: center;
+    line-height: 1;
+    overflow: hidden;
+    position: relative;
+    transform-style: preserve-3d;
+    transition: transform var(--split-flap-flip-duration) var(--split-flap-timing-function);
+    width: 1.18em;
+    will-change: transform;
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-flap="top"] {
+    align-items: flex-start;
+    padding-top: 0;
+    transform: translateZ(calc(var(--split-flap-is-current) * 0.1px)) rotateX(var(--split-flap-top-flap-angle));
+    transform-origin: center calc(100% + var(--split-flap-crease) * 0.5);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-flap="bottom"] {
+    align-items: flex-end;
+    padding-bottom: 0;
+    transform: translateZ(calc(var(--split-flap-is-current) * 0.1px)) rotateX(var(--split-flap-bottom-flap-angle));
+    transform-origin: center calc(var(--split-flap-crease) * -0.5);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-flap] > span {
+    translate: 0 calc(var(--split-flap-crease) * 0.2);
+  }
+
+  .cashenza-preview-widget .bundle-widget__timer--split-flap [data-split-flap-flap="bottom"] > span {
+    translate: 0 calc(var(--split-flap-crease) * -0.2);
+  }
+
+  @keyframes cashenza-flip-top {
+    from {
+      transform: rotateX(0deg);
+    }
+
+    to {
+      transform: rotateX(180deg);
+    }
+  }
+
+  @keyframes cashenza-flip-bottom {
+    from {
+      transform: rotateX(-180deg);
+    }
+
+    to {
+      transform: rotateX(0deg);
+    }
   }
 
   .cashenza-preview-widget .bundle-widget__timer--cards .bundle-widget__timer-label,
@@ -1308,7 +1546,7 @@ const CONFIGURATOR_LAYOUT_CSS = `
   }
 
   .cashenza-preview-widget .bundle-offer-item__row--no-image {
-    grid-template-columns: minmax(0, 1fr) !important;
+    grid-template-columns: 44px minmax(0, 1fr) !important;
   }
 
   .cashenza-preview-widget .bundle-offer-item__thumb-wrap {
@@ -1342,6 +1580,18 @@ const CONFIGURATOR_LAYOUT_CSS = `
     font-weight: 800;
     line-height: 1;
     box-shadow: 0 2px 8px rgba(18, 31, 14, 0.08);
+  }
+
+  .cashenza-preview-widget .bundle-offer-item__thumb-wrap--chip-only {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .cashenza-preview-widget .bundle-offer-item__thumb-wrap--chip-only .bundle-offer-item__qty-chip {
+    position: static;
+    right: auto;
+    bottom: auto;
   }
 
   .cashenza-preview-widget .bundle-offer-item__quantity-row {
@@ -1426,8 +1676,9 @@ const CONFIGURATOR_LAYOUT_CSS = `
     }
 
     .cashenza-preview-widget .bundle-widget__timer {
+      justify-self: end;
       margin-left: 0;
-      align-self: flex-end;
+      align-self: auto;
     }
 
     .cashenza-preview-widget .bundle-offer {
@@ -1457,14 +1708,14 @@ const CONFIGURATOR_LAYOUT_CSS = `
   }
 `;
 
-const TIMER_PRESETS = ["soft", "cards", "outline", "odometer", "split-flap"];
+const TIMER_PRESETS = ["split-flap", "soft", "cards", "outline", "odometer"];
 
 const TIMER_PRESET_LABELS: Record<string, string> = {
+  "split-flap": "Split-flap flip clock",
   soft: "Soft",
   cards: "Cards",
   outline: "Outline",
   odometer: "Odometer",
-  "split-flap": "Split-flap flip clock",
 };
 
 const TIMER_PRESET_DEFAULTS: Record<
@@ -1474,6 +1725,7 @@ const TIMER_PRESET_DEFAULTS: Record<
     expiredText: string;
     backgroundColor: string;
     textColor: string;
+    prefixColor: string;
   }
 > = {
   soft: {
@@ -1481,30 +1733,35 @@ const TIMER_PRESET_DEFAULTS: Record<
     expiredText: "Offer expired",
     backgroundColor: "#1a2118",
     textColor: "#ffffff",
+    prefixColor: "#ffffff",
   },
   cards: {
     prefix: "Limited time offer",
     expiredText: "Offer closed",
     backgroundColor: "#243323",
     textColor: "#ffffff",
+    prefixColor: "#d7e0d4",
   },
   outline: {
     prefix: "Offer closes in",
     expiredText: "Last chance ended",
     backgroundColor: "#ffffff",
     textColor: "#1f3b24",
+    prefixColor: "#1f3b24",
   },
   odometer: {
     prefix: "Offer ends in",
     expiredText: "Offer expired",
     backgroundColor: "#151b16",
     textColor: "#f8fff4",
+    prefixColor: "#cdd8c9",
   },
   "split-flap": {
     prefix: "Offer ends in",
     expiredText: "Offer expired",
     backgroundColor: "#111111",
     textColor: "#ffffff",
+    prefixColor: "#6b7280",
   },
 };
 
@@ -1548,13 +1805,13 @@ function formatMoney(value: number) {
   }).format(value);
 }
 
-function getTimerPreviewValue(value: string) {
+function getTimerPreviewValue(value: string, now = Date.now()) {
   if (!value) return "--:--:--";
 
   const target = new Date(value);
   if (Number.isNaN(target.getTime())) return "--:--:--";
 
-  const remaining = target.getTime() - Date.now();
+  const remaining = target.getTime() - now;
   if (remaining <= 0) return "00:00:00";
 
   const totalSeconds = Math.floor(remaining / 1000);
@@ -1570,6 +1827,14 @@ function getTimerPreviewValue(value: string) {
 function parseVariantPrice(value: string | undefined) {
   const parsed = Number(value || 0);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function toCents(value: number) {
+  return Math.round(value * 100);
+}
+
+function fromCents(value: number) {
+  return value / 100;
 }
 
 function pickEffectiveVariant(
@@ -1595,34 +1860,46 @@ function getOfferPricing(
   offer: BundleOfferDraft,
   offerItems: BundleItemDraft[],
   productSnapshots: Record<string, ProductSnapshotDraft | null>,
+  mode: "cross-sell" | "volume",
 ) {
-  const unitPrices = offerItems.map((item, index) => {
+  const lineSubtotals = new Map<string, number>();
+
+  for (const [index, item] of offerItems.entries()) {
     const snapshot = productSnapshots[item.productHandle.trim()] || null;
     const variant = pickEffectiveVariant(item, snapshot);
-    return variant
-      ? parseVariantPrice(variant.price) * normalizeQuantity(offer.itemQuantities?.[index], 1)
-      : null;
-  });
+    if (!variant) {
+      return { initialTotal: null, discountedTotal: null };
+    }
 
-  if (unitPrices.some((price) => price == null)) {
-    return { initialTotal: null, discountedTotal: null };
+    const quantity =
+      mode === "volume" ? 1 : normalizeQuantity(offer.itemQuantities?.[index], 1);
+    const lineSubtotal = toCents(parseVariantPrice(variant.price)) * quantity;
+    const lineKey =
+      mode === "volume"
+        ? `${item.productHandle}:${variant.id}`
+        : `${index}:${item.productHandle}:${variant.id}`;
+
+    lineSubtotals.set(lineKey, Number(lineSubtotals.get(lineKey) || 0) + lineSubtotal);
   }
 
-  const normalizedPrices = unitPrices as number[];
-  const initialTotal = normalizedPrices.reduce((sum, price) => sum + price, 0);
-  let discountedTotal = initialTotal;
+  const lineSubtotalValues = Array.from(lineSubtotals.values());
+  const initialTotalCents = lineSubtotalValues.reduce((sum, price) => sum + price, 0);
+  let discountedTotalCents = initialTotalCents;
 
   if (offer.discountType === "PERCENTAGE") {
-    discountedTotal = initialTotal * (1 - offer.discountValue / 100);
+    discountedTotalCents = lineSubtotalValues.reduce((sum, lineSubtotal) => {
+      const lineDiscount = Math.round(lineSubtotal * (offer.discountValue / 100));
+      return sum + Math.max(0, lineSubtotal - lineDiscount);
+    }, 0);
   } else if (offer.discountType === "FIXED_AMOUNT") {
-    discountedTotal = initialTotal - offer.discountValue;
+    discountedTotalCents = initialTotalCents - toCents(offer.discountValue);
   } else {
-    discountedTotal = offer.discountValue;
+    discountedTotalCents = toCents(offer.discountValue);
   }
 
   return {
-    initialTotal,
-    discountedTotal: Math.max(0, discountedTotal),
+    initialTotal: fromCents(initialTotalCents),
+    discountedTotal: fromCents(Math.max(0, discountedTotalCents)),
   };
 }
 
@@ -1925,6 +2202,7 @@ export function BundleConfiguratorForm({
       timerExpiredText: defaults.expiredText,
       timerBackgroundColor: defaults.backgroundColor,
       timerTextColor: defaults.textColor,
+      timerPrefixColor: defaults.prefixColor,
     }));
   }
 
@@ -2276,7 +2554,12 @@ function FormShell(props: {
         >
           {aside}
 
-          <div style={styles.previewCard}>
+          <div
+            style={{
+              ...styles.previewCard,
+              ...(shouldFollowPreviewScroll ? styles.previewCardScrollable : {}),
+            }}
+          >
             <div style={styles.previewHeaderRow}>
               <span style={styles.mutedLabel}>Live storefront preview</span>
               <button
@@ -2288,7 +2571,7 @@ function FormShell(props: {
                   ...(shouldFollowPreviewScroll ? styles.previewFollowToggleOn : {}),
                 }}
                 aria-pressed={shouldFollowPreviewScroll}
-              >
+            >
                 Follow scroll {shouldFollowPreviewScroll ? "on" : "off"}
               </button>
             </div>
@@ -2594,6 +2877,14 @@ function FormShell(props: {
                   value={appearance.timerTextColor}
                   onChange={(value) => updateAppearance("timerTextColor", value)}
                 />
+
+                {appearance.timerPreset === "split-flap" ? (
+                  <ColorField
+                    label="Flip clock prefix"
+                    value={appearance.timerPrefixColor}
+                    onChange={(value) => updateAppearance("timerPrefixColor", value)}
+                  />
+                ) : null}
               </div>
             </div>
           ) : null}
@@ -2767,7 +3058,7 @@ function ConfiguratorOfferList({
     <div style={{ ...styles.stack, ...styles.offerListStack }}>
       {offers.map((offer, index) => {
         const offerItems = getConfiguredOfferItems(mode, items, offer, index);
-        const pricing = getOfferPricing(offer, offerItems, productSnapshots);
+        const pricing = getOfferPricing(offer, offerItems, productSnapshots, mode);
         const isBaseOfferCoveredByVolumeBundle =
           mode === "cross-sell" && index === 0 && Boolean(volumeBundleBaseOffer?.id);
         const isOfferExpanded = expandedOffers[index] ?? false;
@@ -3137,6 +3428,9 @@ function OfferItemConfigurator({
   const snapshot = productSnapshots[item.productHandle.trim()] || null;
   const isRepeatedCrossSellAnchor = mode === "cross-sell" && offerIndex > 0 && itemIndex === 0;
   const isProductHandleLocked = mode === "volume" || isRepeatedCrossSellAnchor;
+  const shouldHideProductPicker =
+    (mode === "volume" && isProductHandleLocked) ||
+    (mode === "cross-sell" && itemIndex === 0);
   const productTitle =
     snapshot?.title ||
     productOptions.find((product) => product.handle === item.productHandle.trim())?.title ||
@@ -3160,7 +3454,7 @@ function OfferItemConfigurator({
         </span>
       </summary>
       <div style={styles.offerDisclosureBody}>
-        {mode === "volume" && isProductHandleLocked ? null : (
+        {shouldHideProductPicker ? null : (
           <ProductSearchSelect
             label={itemIndex === 0 ? "Anchored product" : "Added product"}
             value={item.productHandle}
@@ -3369,9 +3663,15 @@ function getPreviewWidgetVariables(appearance: BundleAppearanceDraft): CSSProper
     "--bundle-timer-border":
       typeof timerContainer.border === "string" ? timerContainer.border : "none",
     "--bundle-timer-label-color":
-      typeof timerLabel.color === "string" ? timerLabel.color : "currentColor",
+      typeof timerLabel.color === "string"
+        ? timerLabel.color
+        : appearance.timerPrefixColor || "#6b7280",
     "--bundle-timer-value-color":
       typeof timerValue.color === "string" ? timerValue.color : "currentColor",
+    "--bundle-timer-flap-bg": appearance.timerBackgroundColor || "#111111",
+    "--bundle-timer-flap-bg-top": `color-mix(in srgb, ${appearance.timerBackgroundColor || "#111111"} 88%, white)`,
+    "--bundle-timer-flap-bg-bottom": `color-mix(in srgb, ${appearance.timerBackgroundColor || "#111111"} 82%, black)`,
+    "--bundle-timer-flap-divider": `color-mix(in srgb, ${appearance.timerBackgroundColor || "#111111"} 72%, black)`,
   } as CSSProperties;
 }
 
@@ -3396,7 +3696,19 @@ function BundleLivePreview({
   } | null;
 }) {
   const showTimer = Boolean(appearance.showTimer && appearance.timerEnd);
-  const timerValue = getTimerPreviewValue(appearance.timerEnd);
+  const [previewNow, setPreviewNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!showTimer || appearance.timerPreset !== "split-flap") return;
+
+    const interval = window.setInterval(() => {
+      setPreviewNow(Date.now());
+    }, 1000);
+
+    return () => window.clearInterval(interval);
+  }, [appearance.timerPreset, showTimer]);
+
+  const timerValue = getTimerPreviewValue(appearance.timerEnd, previewNow);
   const isTimerExpired = timerValue === "00:00:00" && Boolean(appearance.timerEnd);
   const timerTheme = getTimerPresetTheme(appearance);
   const previewOffers = offers
@@ -3404,12 +3716,18 @@ function BundleLivePreview({
     .filter(
       ({ index }) =>
         !(mode === "cross-sell" && index === 0 && Boolean(volumeBundleBaseOffer?.id)),
-    )
-    .slice(0, 3);
-  const selectedOfferIndex =
+    );
+  const defaultSelectedOfferIndex =
     bestSellerIndex > 0 && previewOffers.some(({ index }) => index + 1 === bestSellerIndex)
       ? bestSellerIndex - 1
       : previewOffers[0]?.index ?? 0;
+  const [selectedOfferIndex, setSelectedOfferIndex] = useState(defaultSelectedOfferIndex);
+
+  useEffect(() => {
+    if (!previewOffers.some(({ index }) => index === selectedOfferIndex)) {
+      setSelectedOfferIndex(defaultSelectedOfferIndex);
+    }
+  }, [defaultSelectedOfferIndex, previewOffers, selectedOfferIndex]);
 
   return (
     <div style={styles.stylePreviewShell}>
@@ -3448,7 +3766,7 @@ function BundleLivePreview({
           {previewOffers.length ? (
             previewOffers.map(({ offer, index }) => {
               const offerItems = getConfiguredOfferItems(mode, items, offer, index);
-              const pricing = getOfferPricing(offer, offerItems, productSnapshots);
+              const pricing = getOfferPricing(offer, offerItems, productSnapshots, mode);
               const hasPricing =
                 pricing.initialTotal != null && pricing.discountedTotal != null;
               const savings =
@@ -3469,6 +3787,15 @@ function BundleLivePreview({
                   key={index}
                   className={`bundle-offer ${isSelected ? "is-selected" : ""}`}
                   style={{ "--bundle-offer-index": index } as CSSProperties}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedOfferIndex(index)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      setSelectedOfferIndex(index);
+                    }
+                  }}
                 >
                   <div className="bundle-offer__summary">
                     <div className="bundle-offer__summary-left">
@@ -3545,13 +3872,20 @@ function BundleLivePreview({
                               ? pickEffectiveVariant(item, snapshot)
                               : null;
                             const itemImage = getPreviewItemImage(item, snapshot);
-                            const label = `${
-                              itemQuantity > 1 && !itemImage ? `x${itemQuantity} - ` : ""
-                            }${getPreviewVariantLabel(item, snapshot, variant)}`;
+                            const showQuantityChipOnly = !itemImage;
+                            const label = getPreviewVariantLabel(
+                              item,
+                              snapshot,
+                              variant,
+                            );
 
                             return (
                               <div className="bundle-offer-item" key={`${index}-${itemIndex}-${item.productHandle}`}>
-                                <div className={`bundle-offer-item__row ${itemImage ? "" : "bundle-offer-item__row--no-image"}`}>
+                                <div className={`bundle-offer-item__row ${
+                                  itemImage || showQuantityChipOnly
+                                    ? ""
+                                    : "bundle-offer-item__row--no-image"
+                                }`}>
                                   {itemImage ? (
                                   <span className="bundle-offer-item__thumb-wrap">
                                     <img
@@ -3559,6 +3893,12 @@ function BundleLivePreview({
                                       alt=""
                                       className="bundle-offer-item__image"
                                     />
+                                    <span className="bundle-offer-item__qty-chip">
+                                      x{itemQuantity}
+                                    </span>
+                                  </span>
+                                ) : showQuantityChipOnly ? (
+                                  <span className="bundle-offer-item__thumb-wrap bundle-offer-item__thumb-wrap--chip-only">
                                     <span className="bundle-offer-item__qty-chip">
                                       x{itemQuantity}
                                     </span>
@@ -3607,6 +3947,22 @@ function TimerPreviewValue({
 }) {
   const normalizedPreset = String(preset || "");
   const isDigitPreset = normalizedPreset === "odometer" || normalizedPreset === "split-flap";
+  const [settledValue, setSettledValue] = useState(value);
+
+  useEffect(() => {
+    if (normalizedPreset !== "split-flap") {
+      setSettledValue(value);
+      return;
+    }
+
+    if (settledValue === value) return;
+
+    const timeout = window.setTimeout(() => {
+      setSettledValue(value);
+    }, 600);
+
+    return () => window.clearTimeout(timeout);
+  }, [normalizedPreset, settledValue, value]);
 
   if (!isDigitPreset) {
     return <span className={className}>{value}</span>;
@@ -3619,12 +3975,58 @@ function TimerPreviewValue({
           <span key={`${character}-${index}`} className="bundle-widget__timer-separator">
             {character}
           </span>
+        ) : normalizedPreset === "split-flap" ? (
+          <SplitFlapTimerSlot
+            key={index}
+            character={character}
+            previousCharacter={settledValue[index] || character}
+            shouldFlip={settledValue !== value && settledValue[index] !== character}
+          />
         ) : (
           <span key={`${character}-${index}`} className="bundle-widget__timer-digit">
-            {character}
+            <span>{character}</span>
           </span>
         ),
       )}
+    </span>
+  );
+}
+
+const SPLIT_FLAP_DIGITS = "0123456789";
+
+function SplitFlapTimerSlot({
+  character,
+  previousCharacter,
+  shouldFlip,
+}: {
+  character: string;
+  previousCharacter: string;
+  shouldFlip: boolean;
+}) {
+  return (
+    <span
+      className="bundle-widget__timer-digit number"
+      aria-hidden="true"
+      data-number={character}
+    >
+      <span className="base bundle-widget__timer-base">
+        <span className="top bundle-widget__timer-base-top">{character}</span>
+        <span className="bottom bundle-widget__timer-base-bottom">
+          {shouldFlip ? previousCharacter : character}
+        </span>
+      </span>
+      <span
+        className={`flap front bundle-widget__timer-flap bundle-widget__timer-flap--front ${
+          shouldFlip ? "show" : ""
+        }`}
+        data-content={previousCharacter}
+      />
+      <span
+        className={`flap back bundle-widget__timer-flap bundle-widget__timer-flap--back ${
+          shouldFlip ? "show" : ""
+        }`}
+        data-content={character}
+      />
     </span>
   );
 }
@@ -4045,7 +4447,7 @@ function getTimerPresetTheme(appearance: BundleAppearanceDraft) {
         boxShadow: "0 14px 28px rgba(18, 31, 14, 0.18)",
       } satisfies CSSProperties,
       label: {
-        color: `color-mix(in srgb, ${textColor} 82%, transparent)`,
+        color: appearance.timerPrefixColor || `color-mix(in srgb, ${textColor} 82%, transparent)`,
         textTransform: "uppercase",
         letterSpacing: "0.08em",
       } satisfies CSSProperties,
@@ -4070,7 +4472,7 @@ function getTimerPresetTheme(appearance: BundleAppearanceDraft) {
         border: `2px solid ${outlineColor}`,
       } satisfies CSSProperties,
       label: {
-        color: outlineColor,
+        color: appearance.timerPrefixColor || outlineColor,
         textTransform: "uppercase",
         letterSpacing: "0.06em",
       } satisfies CSSProperties,
@@ -4095,7 +4497,7 @@ function getTimerPresetTheme(appearance: BundleAppearanceDraft) {
         boxShadow: "inset 0 0 0 1px rgba(255,255,255,0.08)",
       } satisfies CSSProperties,
       label: {
-        color: `color-mix(in srgb, ${textColor} 78%, transparent)`,
+        color: appearance.timerPrefixColor || `color-mix(in srgb, ${textColor} 78%, transparent)`,
         letterSpacing: "0.08em",
       } satisfies CSSProperties,
       value: {
@@ -4112,14 +4514,15 @@ function getTimerPresetTheme(appearance: BundleAppearanceDraft) {
       prefix: appearance.timerPrefix ?? "Offer ends in",
       expiredLabel: appearance.timerExpiredText ?? "Offer expired",
       container: {
-        borderRadius: "14px",
-        padding: "12px 14px",
-        background: appearance.timerBackgroundColor || "#111111",
+        borderRadius: 0,
+        padding: 0,
+        background: "transparent",
         color: textColor,
-        boxShadow: "0 16px 30px rgba(0,0,0,0.22)",
+        boxShadow: "none",
+        alignItems: "flex-end",
       } satisfies CSSProperties,
       label: {
-        color: `color-mix(in srgb, ${textColor} 72%, transparent)`,
+        color: appearance.timerPrefixColor || "#6b7280",
         letterSpacing: "0.1em",
       } satisfies CSSProperties,
       value: {
@@ -4138,7 +4541,7 @@ function getTimerPresetTheme(appearance: BundleAppearanceDraft) {
       color: appearance.timerTextColor,
     } satisfies CSSProperties,
     label: {
-      color: appearance.timerTextColor,
+      color: appearance.timerPrefixColor || appearance.timerTextColor,
     } satisfies CSSProperties,
     value: {
       color: appearance.timerTextColor,
@@ -4564,6 +4967,12 @@ const styles: Record<string, CSSProperties> = {
     borderRadius: "14px",
     border: "1px solid #e8e8e8",
     background: "#ffffff",
+  },
+  previewCardScrollable: {
+    maxHeight: "calc(100vh - 150px)",
+    overflowY: "auto",
+    overscrollBehavior: "contain",
+    scrollbarGutter: "stable",
   },
   previewHeaderRow: {
     display: "flex",

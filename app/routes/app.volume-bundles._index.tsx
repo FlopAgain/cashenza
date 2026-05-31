@@ -62,6 +62,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           variantsCount: 0,
           availableStock: 0,
           status: "UNKNOWN",
+          collections: [],
         },
         bundles: [] as typeof bundlesWithStatus,
       };
@@ -73,7 +74,18 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const normalizedQuery = searchQuery.toLowerCase();
   const filteredGroups = normalizedQuery
     ? groups.filter((group) =>
-        `${group.product.title} ${group.product.handle} ${group.bundles.map((bundle) => bundle.title).join(" ")}`.toLowerCase().includes(normalizedQuery),
+        [
+          group.product.title,
+          group.product.handle,
+          ...(group.product.collections || []).flatMap((collection: any) => [
+            collection.title,
+            collection.handle,
+          ]),
+          ...group.bundles.map((bundle) => bundle.title),
+        ]
+          .join(" ")
+          .toLowerCase()
+          .includes(normalizedQuery),
       )
     : groups;
 
@@ -207,7 +219,7 @@ export default function VolumeBundlesIndexPage() {
             type="search"
             name="q"
             defaultValue={searchQuery}
-            placeholder="Search by product title or handle"
+            placeholder="Search by product title, handle, or collection"
             style={styles.searchInput}
           />
           <button type="submit" style={styles.secondaryAction}>

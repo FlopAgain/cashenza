@@ -27,25 +27,116 @@
     const valueNode = timer.querySelector(".bundle-widget__timer-value");
     if (!valueNode) return;
 
+    const isSplitFlap = timer.classList.contains("bundle-widget__timer--split-flap");
     const isDigitPreset =
       timer.classList.contains("bundle-widget__timer--odometer") ||
-      timer.classList.contains("bundle-widget__timer--split-flap");
+      isSplitFlap;
+    const previousValue = valueNode.dataset.timerValue || "";
 
     valueNode.setAttribute("aria-label", value);
+    valueNode.dataset.timerValue = value;
 
     if (!isDigitPreset) {
       valueNode.textContent = value;
       return;
     }
 
+    if (isSplitFlap) {
+      renderSplitFlapTimerValue(valueNode, value);
+      return;
+    }
+
     valueNode.innerHTML = value
       .split("")
-      .map((character) =>
-        character === ":"
-          ? `<span class="bundle-widget__timer-separator" aria-hidden="true">:</span>`
-          : `<span class="bundle-widget__timer-digit" aria-hidden="true"><span>${character}</span></span>`,
-      )
+      .map((character, index) => {
+        if (character === ":") {
+          return `<span class="bundle-widget__timer-separator" aria-hidden="true">:</span>`;
+        }
+
+        return `<span class="bundle-widget__timer-digit" aria-hidden="true"><span>${character}</span></span>`;
+      })
       .join("");
+  }
+
+  function createSplitFlapDigit(character, index) {
+    const digit = document.createElement("span");
+    digit.className = "bundle-widget__timer-digit number";
+    digit.setAttribute("aria-hidden", "true");
+    digit.dataset.index = String(index);
+    digit.innerHTML = `
+      <span class="base bundle-widget__timer-base">
+        <span class="top bundle-widget__timer-base-top">0</span>
+        <span class="bottom bundle-widget__timer-base-bottom">0</span>
+      </span>
+      <span class="flap front bundle-widget__timer-flap bundle-widget__timer-flap--front"></span>
+      <span class="flap back bundle-widget__timer-flap bundle-widget__timer-flap--back"></span>
+    `;
+    setSplitFlapDigit(digit, character);
+    return digit;
+  }
+
+  function setSplitFlapDigit(digit, character) {
+    const base = digit.querySelectorAll(".base .top, .base .bottom");
+    digit.dataset.number = character;
+    base.forEach((node) => {
+      node.textContent = character;
+    });
+  }
+
+  function flipSplitFlapDigit(digit, character) {
+    const currentCharacter = digit.dataset.number || "0";
+    if (currentCharacter === character) return;
+
+    const baseTop = digit.querySelector(".base .top");
+    const baseBottom = digit.querySelector(".base .bottom");
+    const flaps = digit.querySelectorAll(".flap");
+    const front = digit.querySelector(".front");
+    const back = digit.querySelector(".back");
+
+    digit.dataset.number = character;
+    front.dataset.content = currentCharacter;
+    back.dataset.content = character;
+    baseTop.textContent = character;
+    flaps.forEach((flap) => flap.classList.add("show"));
+
+    window.clearTimeout(digit.__cashenzaFlipTimeout);
+    digit.__cashenzaFlipTimeout = window.setTimeout(() => {
+      flaps.forEach((flap) => flap.classList.remove("show"));
+      baseBottom.textContent = character;
+    }, 600);
+  }
+
+  function renderSplitFlapTimerValue(valueNode, value) {
+    const characters = value.split("");
+    const structure = characters.map((character) => (character === ":" ? ":" : "0")).join("");
+
+    if (valueNode.dataset.timerStructure !== structure) {
+      valueNode.innerHTML = "";
+      characters.forEach((character, index) => {
+        if (character === ":") {
+          const separator = document.createElement("span");
+          separator.className = "bundle-widget__timer-separator";
+          separator.setAttribute("aria-hidden", "true");
+          separator.textContent = ":";
+          valueNode.append(separator);
+          return;
+        }
+
+        valueNode.append(createSplitFlapDigit(character, index));
+      });
+      valueNode.dataset.timerStructure = structure;
+      return;
+    }
+
+    characters.forEach((character, index) => {
+      if (character === ":") return;
+
+      const digit = valueNode.querySelector(
+        `.bundle-widget__timer-digit[data-index="${index}"]`,
+      );
+      if (!digit) return;
+      flipSplitFlapDigit(digit, character);
+    });
   }
 
   function renderTimer(timer) {
@@ -141,6 +232,7 @@
       root.closest(".product-details") ||
       document.querySelector(".product-information") ||
       document.querySelector(".product-details");
+    const productSection = loadingContainer || document;
     const registry = getWidgetRegistry();
     const isProductContext = Boolean(productHandle);
 
@@ -168,6 +260,100 @@
 
       rootTopbar.hidden = !visible;
       rootTopbar.style.display = visible ? "" : "none";
+    }
+
+    function isValidPurchaseCandidate(candidate) {
+      if (!(candidate instanceof HTMLElement)) return false;
+      if (candidate.closest(".bundle-widget")) return false;
+      if (candidate.closest("cart-drawer, cart-notification, sticky-add-to-cart")) return false;
+      if (candidate.closest("[data-cashenza-ignore-placement]")) return false;
+
+      return true;
+    }
+
+    function hasPurchaseControl(candidate) {
+      if (!(candidate instanceof HTMLElement)) return false;
+      return Boolean(
+        candidate.matches(
+          "button[name='add'], button[type='submit'][name='add'], [data-testid='standalone-add-to-cart'], .product-form__submit, .shopify-payment-button, .shopify-payment-button__button",
+        ) ||
+          candidate.querySelector(
+            "button[name='add'], button[type='submit'][name='add'], [data-testid='standalone-add-to-cart'], .product-form__submit, .shopify-payment-button, .shopify-payment-button__button",
+          ),
+      );
+    }
+
+    function normalizePurchaseAnchor(candidate) {
+      if (!(candidate instanceof HTMLElement)) return null;
+
+      return (
+        candidate.closest(
+          ".buy-buttons-block, .product-form-buttons, .product-form__buttons, .product-form__submit, .product-form, .shopify-product-form, product-form-component, product-form, form[action*='/cart/add']",
+        ) || candidate
+      );
+    }
+
+    function findStorefrontPurchaseAnchor() {
+      const prioritySelectorGroups = [
+        [
+          ".buy-buttons-block",
+          ".product-form-buttons",
+          ".product-form__buttons",
+          "[data-testid='standalone-add-to-cart']",
+          ".product-form__submit",
+          "button[name='add']",
+          "button[type='submit'][name='add']",
+          ".shopify-payment-button",
+          ".shopify-payment-button__button",
+        ],
+        [
+          "form[action*='/cart/add']",
+          ".shopify-product-form",
+          ".product-form",
+          "product-form-component",
+          "product-form",
+        ],
+      ];
+      const scopes = [productSection, document].filter(Boolean);
+
+      for (const scope of scopes) {
+        if (!("querySelectorAll" in scope)) continue;
+
+        for (const selectors of prioritySelectorGroups) {
+          const candidates = Array.from(scope.querySelectorAll(selectors.join(",")));
+          const candidate = candidates.find((node) => {
+            if (!isValidPurchaseCandidate(node)) return false;
+            return selectors.some((selector) => selector.includes("form")) || hasPurchaseControl(node);
+          });
+
+          const anchor = normalizePurchaseAnchor(candidate);
+          if (anchor && isValidPurchaseCandidate(anchor)) return anchor;
+        }
+      }
+
+      return null;
+    }
+
+    function moveWidgetToPurchaseFlow() {
+      const anchor = findStorefrontPurchaseAnchor();
+      if (!anchor || !anchor.parentElement) return false;
+      if (anchor === root || anchor.contains(root)) return false;
+      if (anchor.previousElementSibling === root) {
+        root.dataset.bundlePlacementMoved = "true";
+        return true;
+      }
+
+      anchor.parentElement.insertBefore(root, anchor);
+      root.dataset.bundlePlacementMoved = "true";
+      return true;
+    }
+
+    function scheduleWidgetPlacement() {
+      moveWidgetToPurchaseFlow();
+      requestAnimationFrame(() => moveWidgetToPurchaseFlow());
+      [50, 250, 800].forEach((delay) => {
+        window.setTimeout(() => moveWidgetToPurchaseFlow(), delay);
+      });
     }
 
     function hideWidgetAndStop({ clearLoading = true } = {}) {
@@ -562,17 +748,18 @@
         appearance.saveBadgeText ?? themeBadgeAppearance.saveBadgeText;
       appearance.saveBadgePrefix =
         appearance.saveBadgePrefix ?? themeBadgeAppearance.saveBadgePrefix;
-      appearance.timerPreset = appearance.timerPreset || themeTimerPreset || "soft";
+      appearance.timerPreset = appearance.timerPreset || themeTimerPreset || "split-flap";
 
       return appearance;
     }
 
     function getTimerPresetTheme(appearance) {
-      const preset = ["soft", "cards", "outline", "odometer", "split-flap"].includes(String(appearance?.timerPreset || ""))
+      const preset = ["split-flap", "soft", "cards", "outline", "odometer"].includes(String(appearance?.timerPreset || ""))
         ? String(appearance.timerPreset)
-        : "soft";
+        : "split-flap";
       const timerBg = appearance?.timerBackgroundColor || "#1a2118";
       const timerText = appearance?.timerTextColor || "#ffffff";
+      const timerPrefixColor = appearance?.timerPrefixColor || "#6b7280";
       const timerPrefix = appearance?.timerPrefix ?? "Offer ends in";
       const timerExpiredText = appearance?.timerExpiredText ?? "Offer expired";
 
@@ -582,7 +769,7 @@
           background: `linear-gradient(135deg, color-mix(in srgb, ${timerBg} 88%, black) 0%, color-mix(in srgb, ${timerBg} 58%, black) 100%)`,
           text: timerText,
           border: "none",
-          labelColor: "rgba(255,255,255,0.82)",
+          labelColor: timerPrefixColor || "rgba(255,255,255,0.82)",
           valueColor: timerText,
           prefix: timerPrefix,
           expiredLabel: timerExpiredText,
@@ -595,7 +782,7 @@
           background: "transparent",
           text: timerText,
           border: `2px solid ${timerText}`,
-          labelColor: timerText,
+          labelColor: timerPrefixColor || timerText,
           valueColor: timerText,
           prefix: timerPrefix,
           expiredLabel: timerExpiredText,
@@ -608,7 +795,7 @@
           background: timerBg || "#151b16",
           text: timerText || "#f8fff4",
           border: "none",
-          labelColor: `color-mix(in srgb, ${timerText || "#f8fff4"} 78%, transparent)`,
+          labelColor: timerPrefixColor || `color-mix(in srgb, ${timerText || "#f8fff4"} 78%, transparent)`,
           valueColor: timerText || "#f8fff4",
           prefix: timerPrefix,
           expiredLabel: timerExpiredText,
@@ -618,10 +805,10 @@
       if (preset === "split-flap") {
         return {
           preset,
-          background: timerBg || "#111111",
+          background: "transparent",
           text: timerText || "#ffffff",
           border: "none",
-          labelColor: `color-mix(in srgb, ${timerText || "#ffffff"} 72%, transparent)`,
+          labelColor: timerPrefixColor || "#6b7280",
           valueColor: timerText || "#ffffff",
           prefix: timerPrefix,
           expiredLabel: timerExpiredText,
@@ -633,7 +820,7 @@
         background: timerBg,
         text: timerText,
         border: "none",
-        labelColor: timerText,
+        labelColor: timerPrefixColor || timerText,
         valueColor: timerText,
         prefix: timerPrefix,
         expiredLabel: timerExpiredText,
@@ -690,11 +877,16 @@
       target.style.setProperty("--bundle-save-text", appearance.saveBadgeText || "#1a2118");
 
       const timerTheme = getTimerPresetTheme(appearance);
+      const timerFlapBg = appearance.timerBackgroundColor || "#111111";
       target.style.setProperty("--bundle-timer-bg", timerTheme.background);
       target.style.setProperty("--bundle-timer-text", timerTheme.text);
       target.style.setProperty("--bundle-timer-border", timerTheme.border);
       target.style.setProperty("--bundle-timer-label-color", timerTheme.labelColor);
       target.style.setProperty("--bundle-timer-value-color", timerTheme.valueColor);
+      target.style.setProperty("--bundle-timer-flap-bg", timerFlapBg);
+      target.style.setProperty("--bundle-timer-flap-bg-top", `color-mix(in srgb, ${timerFlapBg} 88%, white)`);
+      target.style.setProperty("--bundle-timer-flap-bg-bottom", `color-mix(in srgb, ${timerFlapBg} 82%, black)`);
+      target.style.setProperty("--bundle-timer-flap-divider", `color-mix(in srgb, ${timerFlapBg} 72%, black)`);
 
       const eyebrowNode = target.querySelector(".bundle-widget__eyebrow");
       const headingNode = target.querySelector(".bundle-widget__title");
@@ -933,6 +1125,46 @@
         );
       }
 
+      function getOfferLineSubtotals(offer) {
+        const lineSubtotals = [];
+
+        (offer?.items || []).forEach((item, index) => {
+          const quantity = getEffectiveItemQuantity(offer, item, index);
+          const variants = item.product?.variants || [];
+
+          if (item.allowVariantSelection && variants.length) {
+            const groupedSubtotals = new Map();
+
+            for (let unitIndex = 0; unitIndex < quantity; unitIndex += 1) {
+              const selection = getUnitSelection(item, unitIndex);
+              const variantId = normalizeVariantId(selection?.variantId);
+              const key = `${item.id}:${variantId || unitIndex}`;
+              groupedSubtotals.set(
+                key,
+                Number(groupedSubtotals.get(key) || 0) + Number(selection?.priceCents || 0),
+              );
+            }
+
+            groupedSubtotals.forEach((subtotal) => {
+              if (subtotal > 0) lineSubtotals.push(subtotal);
+            });
+            return;
+          }
+
+          const subtotal = Number(selections[item.id]?.priceCents || 0) * quantity;
+          if (subtotal > 0) lineSubtotals.push(subtotal);
+        });
+
+        return lineSubtotals;
+      }
+
+      function getPercentageDiscountedTotalCents(offer, discountValue) {
+        return getOfferLineSubtotals(offer).reduce((sum, lineSubtotal) => {
+          const lineDiscount = Math.round((lineSubtotal * Number(discountValue || 0)) / 100);
+          return sum + Math.max(0, lineSubtotal - lineDiscount);
+        }, 0);
+      }
+
       function getSelectedDynamicAnalyticsPayload() {
         const selectedOffer = getSelectedOffer();
         return {
@@ -955,7 +1187,7 @@
         const fixedAmountCents = parsePriceToCents(offer.discountValue);
 
         if (offer.discountType === "PERCENTAGE") {
-          return subtotal - Math.round((subtotal * Number(offer.discountValue || 0)) / 100);
+          return getPercentageDiscountedTotalCents(offer, offer.discountValue);
         }
         if (offer.discountType === "FIXED_AMOUNT") {
           return Math.max(0, subtotal - fixedAmountCents);
@@ -1330,7 +1562,7 @@
         const fixedAmountCents = parsePriceToCents(offer.discountValue);
         const finalCents =
           offer.discountType === "PERCENTAGE"
-            ? subtotal - Math.round((subtotal * Number(offer.discountValue || 0)) / 100)
+            ? getPercentageDiscountedTotalCents(offer, offer.discountValue)
             : offer.discountType === "FIXED_AMOUNT"
               ? Math.max(0, subtotal - fixedAmountCents)
               : offer.discountType === "FIXED_PRICE"
@@ -1511,6 +1743,7 @@
 
       if (!proxyUrl || !dynamicRoot) {
         wireStaticBundle();
+        scheduleWidgetPlacement();
         startRevealAnimation(3, themeEffectsPreset);
         clearLoadingState("active");
         return;
@@ -1549,6 +1782,7 @@
           root.hidden = false;
           root.dataset.bundleVisibility = "visible";
           root.style.display = "";
+          scheduleWidgetPlacement();
           dynamicRoot.hidden = false;
           if (staticRoot) staticRoot.hidden = true;
           setRootTopbarVisible(false);

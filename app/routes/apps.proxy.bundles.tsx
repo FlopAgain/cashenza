@@ -146,6 +146,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
           timerExpiredText: bundle.timerExpiredText,
           timerBackgroundColor: bundle.timerBackgroundColor,
           timerTextColor: bundle.timerTextColor,
+          timerPrefixColor: (bundle as any).timerPrefixColor || "#6b7280",
         },
         offers: bundle.offers.map((offer) => ({
           id: offer.id,

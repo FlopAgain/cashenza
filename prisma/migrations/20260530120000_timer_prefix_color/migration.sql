@@ -1,0 +1,1 @@
+ALTER TABLE "Bundle" ADD COLUMN "timerPrefixColor" TEXT NOT NULL DEFAULT '#6b7280';

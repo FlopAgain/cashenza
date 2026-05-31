@@ -101,6 +101,7 @@ async function createDefaultCrossSellBundleForProduct(params: {
       timerExpiredText: appearance.timerExpiredText,
       timerBackgroundColor: appearance.timerBackgroundColor,
       timerTextColor: appearance.timerTextColor,
+      timerPrefixColor: appearance.timerPrefixColor,
       offers: {
         create: [
           {
