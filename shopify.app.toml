@@ -2,7 +2,7 @@
 
 client_id = "100d8b864ac545a08a9245739c53a76c"
 name = "Cashenza Bundlify"
-application_url = "https://example.com"
+application_url = "https://cashenza.onrender.com"
 embedded = true
 
 [build]
@@ -24,7 +24,7 @@ api_version = "2026-07"
 scopes = "write_products,write_metaobjects,write_metaobject_definitions,write_app_proxy,write_discounts,read_themes,write_themes"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [ "https://cashenza.onrender.com/auth/callback" ]
 
 [app_proxy]
 url = "/apps/proxy"
